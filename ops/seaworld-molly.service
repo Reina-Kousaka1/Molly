@@ -1,0 +1,26 @@
+[Unit]
+Description=SeaWorld local database service for Molly
+After=local-fs.target
+RequiresMountsFor=/mnt/bots/molly-data
+
+[Service]
+Type=simple
+User=molly
+Group=molly
+RuntimeDirectory=seaworld-molly
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStart=/mnt/bots/seaworld.db/target/release/seaworld-local /mnt/bots/molly-data/molly.seaworld.db /run/seaworld-molly/seaworld.sock
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/bots/molly-data
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[Unit]
+Description=Molly Discord bot
+After=network-online.target seaworld-molly.service
+Wants=network-online.target
+Requires=seaworld-molly.service
+
+[Service]
+Type=simple
+User=molly
+Group=molly
+WorkingDirectory=/mnt/bots/molly
+Environment=MOLLY_SEAWORLD_SOCKET=/run/seaworld-molly/seaworld.sock
+EnvironmentFile=/etc/molly/molly.env
+ExecStart=/mnt/bots/molly/runtime/luvit /mnt/bots/molly/molly.lua
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
