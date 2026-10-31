@@ -1,0 +1,45 @@
+name: molly
+
+include:
+  - path: ./lavalink/compose.yml
+
+services:
+  bot:
+    image: molly:local
+    container_name: molly-bot
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    user: "999:983"
+    env_file:
+      - path: /etc/molly/molly.env
+        required: true
+        format: raw
+    environment:
+      MOLLY_SEAWORLD_SOCKET: /run/seaworld-molly/seaworld.sock
+      MOLLY_LAVALINK_URL: http://127.0.0.1:2333
+      MOLLY_LAVALINK_TIMEOUT_MS: "5000"
+    volumes:
+      - type: bind
+        source: /run/seaworld-molly
+        target: /run/seaworld-molly
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    depends_on:
+      lavalink:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

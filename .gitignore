@@ -15,3 +15,5 @@ tests/.economy-*/
 # Lua build/test artifacts
 *.luac
 .luacheckcache
+__pycache__/
+*.py[cod]

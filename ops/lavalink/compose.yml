@@ -1,0 +1,37 @@
+services:
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4.2.2@sha256:87ae53e60dc147c9dddb28e126ce503a26bc8d1477ed8d99543614677882afff
+    container_name: molly-lavalink
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    env_file:
+      - path: /etc/molly/lavalink.env
+        required: true
+        format: raw
+    volumes:
+      - ./application.yml:/opt/Lavalink/application.yml:ro
+      - molly-lavalink-plugins:/opt/Lavalink/plugins
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --header=\"Authorization: $$LAVALINK_SERVER_PASSWORD\" -qO- http://127.0.0.1:2333/version >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  molly-lavalink-plugins:
+    name: molly-lavalink-plugins
