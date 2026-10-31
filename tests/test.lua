@@ -34,6 +34,14 @@ local function equal(actual, expected)
   assert(actual == expected, "expected " .. tostring(expected) .. ", got " .. tostring(actual))
 end
 
+local function can_yield_across_pcall()
+  local thread = coroutine.create(function()
+    return pcall(function() coroutine.yield("yield_probe") end)
+  end)
+  local resumed = coroutine.resume(thread)
+  return resumed and coroutine.status(thread) == "suspended"
+end
+
 test("config validates without disclosing a token", function()
   local config, errors = Config.load({ MOLLY_DISCORD_TOKEN = "" })
   assert(config == nil)
@@ -215,6 +223,7 @@ test("SeaWorld persistence connector reports unavailable transport and closes gr
   assert(closed)
 end)
 
+if can_yield_across_pcall() then
 test("guild store serializes the shared connection while isolating guild locks", function()
   local connector = { in_transaction = false, pause_first_query = true }
   function connector:query(payload)
@@ -260,6 +269,9 @@ test("guild store serializes the shared connection while isolating guild locks",
   assert(second_result[1] and second_result[2] == "second")
   assert(coroutine.status(second) == "dead")
 end)
+else
+  io.stdout:write("skip - guild store queue test requires yieldable pcall\n")
+end
 
 test("health status remains non-sensitive", function()
   local output = Status.message(true, { status = "unavailable" })
