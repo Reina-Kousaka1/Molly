@@ -151,7 +151,7 @@ test("hackban validates, checks permissions, stores a case and never replays", f
       user_id = "12345678901234567", reason = "reason", confirm = true },
     get_arg = function(self, key) return self.args[key] end,
     respond = function(_, msg) reply = msg end, edit = function(_, msg) output = msg end }
-  function ctx.bot.rest:create_interaction_response() end
+  function ctx.bot.rest:create_interaction_response() return true end
   function ctx.bot.rest:get_original_interaction_response() return { id = "42", flags = 64 } end
   function ctx.bot.rest:get_guild() return { owner_id = "9" } end
   function ctx.bot.rest:get_member() error({ code = 10007 }) end

@@ -58,10 +58,19 @@ end
 function Driver:_call(operation, payload, keep, timeout)
   if self.busy then return false, "transport_busy" end
   self.busy = true
+  local timer, timed_out
+  timed_out = false
   local ok, first, second = pcall(function()
     if not numbers_safe(payload, {}, 0) then return false, "invalid_argument" end
     local call_timeout = timeout or self.timeout
+    timer = uv.new_timer()
+    timer:start(call_timeout, 0, function()
+      timed_out = true
+      if self.closer then pcall(self.closer)
+      elseif self.socket then pcall(close_handle, self.socket) end
+    end)
     local connected, reason = self:_open(call_timeout)
+    if timed_out then return false, "timeout" end
     if not connected then return false, reason end
     counter = counter + 1
     local id = tostring(counter)
@@ -70,8 +79,6 @@ function Driver:_call(operation, payload, keep, timeout)
     if type(body.set) == "table" and body.set ~= json.null then body.set = object_copy(body.set) end
     local request = json.encode({ protocol_version = "1.0.0", request_id = id, operation = operation, payload = body })
     if not request or #request + 1 > MAX_FRAME then return false, "resource_limit" end
-    local timer = uv.new_timer()
-    timer:start(call_timeout, 0, function() if self.closer then self.closer() end end)
     local success, response, err = pcall(function()
       local written = self.write(request .. "\n")
       if not written then return nil, "transport_unavailable" end
@@ -91,15 +98,20 @@ function Driver:_call(operation, payload, keep, timeout)
         if #self.buffer > MAX_FRAME then return nil, "resource_limit" end
       end
     end)
-    timer:stop(); timer:close()
+    if timed_out then return false, "timeout" end
     if not success or not response then return false, err or "transport_unavailable" end
     if type(response) ~= "table" or response.protocol_version ~= "1.0.0" or response.request_id ~= id or type(response.ok) ~= "boolean" then
       return false, "invalid_response"
     end
     if not response.ok then return false, type(response.error) == "table" and response.error.code or "operation_failed" end
     if type(response.result) ~= "table" then return false, "invalid_response" end
+    if timed_out then return false, "timeout" end
     return true, response.result
   end)
+  if timer then
+    pcall(timer.stop, timer)
+    pcall(close_handle, timer)
+  end
   self.busy = false
   if not ok or not first or not keep then self:close() end
   if not ok then return false, "transport_unavailable" end

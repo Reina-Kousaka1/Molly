@@ -1,6 +1,29 @@
 local Store = require("src.persistence.guild_store")
 local Directory = {}
 Directory.__index = Directory
+-- Request IDs are Discord snowflakes, so numeric string order retains the
+-- newest idempotency receipts while bounding each guild document.
+local MAX_RECEIPTS = 1000
+
+local function older_request(a, b)
+  if #a == #b then return a < b end
+  return #a < #b
+end
+
+local function prune_receipts(receipts)
+  local requests = {}
+  for request, receipt in pairs(receipts) do
+    if type(receipt) == "table" and type(receipt.staff_id) == "string" then
+      requests[#requests + 1] = request
+    end
+  end
+  if #requests <= MAX_RECEIPTS then return end
+  table.sort(requests, older_request)
+  for index = 1, #requests - MAX_RECEIPTS do
+    receipts[requests[index]] = nil
+  end
+end
+
 function Directory.new(store, clock) return setmetatable({ store = store, clock = clock or os.time }, Directory) end
 
 function Directory:apply(guild, actor, target, action, note, request)
@@ -11,7 +34,8 @@ function Directory:apply(guild, actor, target, action, note, request)
   return self.store:run(guild, function(data)
     local entry = data.staff[target]
     if request and data.receipts[request] then
-      if data.receipts[request].staff_id ~= target or not entry then return false, "invalid_store" end
+      local receipt = data.receipts[request]
+      if type(receipt) ~= "table" or receipt.staff_id ~= target or not entry then return false, "invalid_store" end
       return true, entry, false
     end
     if action == "add" then
@@ -31,7 +55,10 @@ function Directory:apply(guild, actor, target, action, note, request)
       entry.notes[#entry.notes + 1] = { author = actor, text = note, timestamp = self.clock() }
     elseif not entry then return false, "not_found" end
     local changed = action == "add" or action == "remove" or action == "note"
-    if changed and request then data.receipts[request] = { staff_id = target } end
+    if changed and request then
+      data.receipts[request] = { staff_id = target }
+      prune_receipts(data.receipts)
+    end
     return true, entry, changed
   end)
 end

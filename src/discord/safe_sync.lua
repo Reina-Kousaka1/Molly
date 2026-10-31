@@ -35,11 +35,18 @@ end
 -- Preflight all schemas first. Only description-only drift is PATCHed; this
 -- never deletes commands or changes an executable command schema.
 function Sync.run(bot)
-  local id = bot.client:get_application_id()
-  if not id or not bot.http then return false, "application_unavailable" end
+  if type(bot) ~= "table" or type(bot.client) ~= "table"
+    or type(bot.client.get_application_id) ~= "function" then
+    return false, "application_unavailable"
+  end
+  local id_ok, id = pcall(bot.client.get_application_id, bot.client)
+  if not id_ok or (type(id) ~= "string" and type(id) ~= "number") or type(bot.http) ~= "table" then
+    return false, "application_unavailable"
+  end
+  if type(bot.http.get) ~= "function" then return false, "remote_unavailable" end
   local endpoint = "/applications/" .. id .. "/commands"
-  local remote = bot.http:get(endpoint)
-  if type(remote) ~= "table" then return false, "remote_unavailable" end
+  local remote_ok, remote = pcall(bot.http.get, bot.http, endpoint)
+  if not remote_ok or type(remote) ~= "table" then return false, "remote_unavailable" end
   local existing, missing, local_names, updates = {}, {}, {}, {}
   for _, command in ipairs(remote) do
     local key = tostring(command.type or 1) .. ":" .. command.name
@@ -72,7 +79,13 @@ function Sync.run(bot)
     if not found then missing[#missing + 1] = spec end
   end
   for _, update in ipairs(updates) do
-    local changed = bot.http:patch(endpoint .. "/" .. update.id, update.spec)
+    if type(bot.http.patch) ~= "function" then
+      return false, "registration_unconfirmed", { command = update.name, field = "description" }
+    end
+    local patch_ok, changed = pcall(bot.http.patch, bot.http, endpoint .. "/" .. update.id, update.spec)
+    if not patch_ok then
+      return false, "registration_unconfirmed", { command = update.name, field = "description" }
+    end
     if type(changed) ~= "table" or changed.id ~= update.id or changed.name ~= update.name
       or difference(update.spec, changed, "") ~= nil then
       return false, "registration_unconfirmed", { command = update.name, field = "description" }
@@ -80,9 +93,13 @@ function Sync.run(bot)
     existing[update.key] = changed
   end
   for _, spec in ipairs(missing) do
-    local created = bot.http:post(endpoint, spec)
+    if type(bot.http.post) ~= "function" then
+      return false, "registration_unconfirmed", { command = spec.name }
+    end
+    local post_ok, created = pcall(bot.http.post, bot.http, endpoint, spec)
+    if not post_ok then return false, "registration_unconfirmed", { command = spec.name } end
     if type(created) ~= "table" or created.name ~= spec.name or type(created.id) ~= "string" then
-      return false, "registration_unconfirmed"
+      return false, "registration_unconfirmed", { command = spec.name }
     end
   end
   return true, { updated = #updates, created = #missing }

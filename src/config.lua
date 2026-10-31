@@ -72,9 +72,12 @@ function Config.load(env)
   elseif lavalink_password and not lavalink_url then
     music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL"
   end
-  local lavalink_timeout_ms = positive_integer(
-    read(env, "MOLLY_LAVALINK_TIMEOUT_MS"), 1000, 100, 30000, music_errors, "MOLLY_LAVALINK_TIMEOUT_MS"
-  )
+  local lavalink_timeout_ms = 1000
+  if lavalink_url or lavalink_password then
+    lavalink_timeout_ms = positive_integer(
+      read(env, "MOLLY_LAVALINK_TIMEOUT_MS"), 1000, 100, 30000, music_errors, "MOLLY_LAVALINK_TIMEOUT_MS"
+    )
+  end
 
   if #errors > 0 then
     return nil, errors

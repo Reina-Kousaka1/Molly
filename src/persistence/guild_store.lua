@@ -6,7 +6,41 @@ local function valid_id(value)
 end
 
 function Store.new(connector)
-  return setmetatable({ connector = connector, busy = false }, Store)
+  return setmetatable({
+    connector = connector,
+    guild_busy = {},
+    transport_busy = false,
+    transport_waiters = {},
+  }, Store)
+end
+
+-- SeaWorld currently exposes a single connection-bound transaction at a time.
+-- Keep that connection serial, but let independent guilds wait for their turn
+-- instead of failing because another guild is using it.
+local function acquire_transport(self, guild_id)
+  if not self.transport_busy then
+    self.transport_busy = true
+    return true
+  end
+
+  local thread, is_main = coroutine.running()
+  if not thread or is_main then return false, "busy" end
+  self.transport_waiters[#self.transport_waiters + 1] = { thread = thread, guild_id = guild_id }
+  local acquired, reason = coroutine.yield()
+  if not acquired then return false, reason or "unavailable" end
+  return true
+end
+
+local function release_transport(self)
+  while #self.transport_waiters > 0 do
+    local waiter = table.remove(self.transport_waiters, 1)
+    if coroutine.status(waiter.thread) == "suspended" then
+      local resumed = coroutine.resume(waiter.thread, true)
+      if resumed then return end
+    end
+    self.guild_busy[waiter.guild_id] = nil
+  end
+  self.transport_busy = false
 end
 
 -- The transport's transactions are connection-bound and do not support query.
@@ -14,8 +48,13 @@ end
 -- located first, then the document is read again *inside* the transaction.
 function Store:run(guild_id, fn)
   if not valid_id(guild_id) then return false, "invalid_guild" end
-  if self.busy then return false, "busy" end
-  self.busy = true
+  if self.guild_busy[guild_id] then return false, "busy" end
+  self.guild_busy[guild_id] = true
+  local acquired, lock_error = acquire_transport(self, guild_id)
+  if not acquired then
+    self.guild_busy[guild_id] = nil
+    return false, lock_error
+  end
   local c, collection = self.connector, "molly_g_" .. guild_id
   local function work()
     local found, rows = c:query({ collection = collection, limit = 2 })
@@ -54,7 +93,8 @@ function Store:run(guild_id, fn)
   end
   local ok, success, result = pcall(work)
   if c.in_transaction then pcall(c.rollback, c) end
-  self.busy = false
+  self.guild_busy[guild_id] = nil
+  release_transport(self)
   if not ok then return false, "unavailable" end
   return success, result
 end

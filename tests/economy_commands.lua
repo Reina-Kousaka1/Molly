@@ -19,7 +19,7 @@ local function invoke(ledger, rest, fail_edit)
   Economy.register(router, ledger, { logger = logger })
   local context = {
     guild = { id = "100" }, author = { id = "200" }, interaction_id = "300", interaction_token = "fixture",
-    bot = { application_id = "400", rest = rest or { create_interaction_response = function() end } },
+    bot = { application_id = "400", rest = rest or { create_interaction_response = function() return true end } },
     get_arg = function() return nil end,
     respond = function(_, content, options) responses[#responses + 1] = { content = content, options = options }; return true end,
     edit = function(_, content, options)

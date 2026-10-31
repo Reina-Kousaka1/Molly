@@ -48,11 +48,27 @@ function Response.set_embed(ctx, spec)
   return true
 end
 
--- discord.lua returns only the body, not the HTTP status. Verify the deferred
--- original exists before starting any persistent or moderation work.
--- Deferred responses are public by default, matching ordinary Discord
--- command responses. Pass { ephemeral = true } only for private workflows.
-function Response.defer(ctx, options)
+local function callback_result(call_ok, result)
+  if not call_ok or result == nil then return false, "request_failed" end
+  if result == false then return false, "request_rejected" end
+  if type(result) ~= "table" then return true end
+  if result.ok == false or result.success == false then return false, "request_rejected" end
+  for _, field in ipairs({ "status", "status_code", "http_status" }) do
+    if result[field] ~= nil then
+      local status = tonumber(result[field])
+      if not status or status < 200 or status > 299 then
+        return false, status and ("http_" .. tostring(math.floor(status))) or "invalid_status"
+      end
+    end
+  end
+  local code = tonumber(result.code)
+  if code and code >= 100 and code <= 599 and (code < 200 or code > 299) then
+    return false, "http_" .. tostring(math.floor(code))
+  end
+  return true
+end
+
+local function send_defer(ctx, options, require_application_id)
   if type(ctx) ~= "table" then return false, "invalid_context" end
   if ctx._molly_deferred then return true end
   if ctx._molly_initial_response_sent then return false, "already_responded" end
@@ -60,37 +76,45 @@ function Response.defer(ctx, options)
   if not bot or not bot.rest or type(bot.rest.create_interaction_response) ~= "function" then
     return false, "missing_rest_client"
   end
-  if not bot.application_id then return false, "missing_application_id" end
+  if require_application_id and not bot.application_id then return false, "missing_application_id" end
   if not ctx.interaction_id then return false, "missing_interaction_id" end
   if not ctx.interaction_token then return false, "missing_interaction_token" end
 
-  -- Discord accepts type 5 without a data object for a public defer. Keeping
-  -- data absent also avoids encoders serializing an empty Lua table as []
-  -- where Discord expects an object. Only send data when it has a real field.
+  -- A public defer has no data object. Keeping it absent also avoids encoders
+  -- serializing an empty Lua table as [] where Discord expects an object.
   local payload = { type = 5 }
   if options and options.ephemeral == true then payload.data = { flags = 64 } end
-  local sent = pcall(bot.rest.create_interaction_response, bot.rest, ctx.interaction_id, ctx.interaction_token, payload)
-  if not sent then return false, "request_failed" end
-  -- A successful callback request is Discord's acknowledgement. Fetching the
-  -- original response here adds a second network dependency after the ack and
-  -- can cause callers to return without ever editing the deferred response.
+  local call_ok, result = pcall(bot.rest.create_interaction_response,
+    bot.rest, ctx.interaction_id, ctx.interaction_token, payload)
+  local accepted, detail = callback_result(call_ok, result)
+  if not accepted then
+    local logger = ctx._molly_logger
+    if logger and type(logger.error) == "function" then
+      pcall(logger.error, logger, "discord_interaction_ack_failed", {
+        command = ctx._molly_command_name, reason = detail,
+      })
+    end
+    return false, "request_failed"
+  end
   ctx._molly_deferred = true
   return true
+end
+
+-- discord.lua returns only the response body, while some REST adapters return
+-- a status object. Accept successful bodies and 2xx status objects, but do not
+-- mark a context deferred after a rejected result.
+-- Deferred responses are public by default, matching ordinary Discord
+-- command responses. Pass { ephemeral = true } only for private workflows.
+function Response.defer(ctx, options)
+  return send_defer(ctx, options, true)
 end
 
 -- Acknowledge a public, deferred response for lightweight diagnostic commands.
 -- The installed discord.lua API has no SlashCommandContext:defer method, but
 -- its REST client exposes the same official interaction callback endpoint.
 function Response.acknowledge(ctx)
-  if type(ctx) ~= "table" then return false end
-  if ctx._molly_deferred then return true end
-  if ctx._molly_initial_response_sent then return false end
-  local bot = ctx.bot
-  if not bot or not bot.rest or not ctx.interaction_id or not ctx.interaction_token then return false end
-  local sent = pcall(bot.rest.create_interaction_response, bot.rest, ctx.interaction_id, ctx.interaction_token, { type = 5 })
-  if not sent then return false end
-  ctx._molly_deferred = true
-  return true
+  local acknowledged = send_defer(ctx, nil, false)
+  return acknowledged == true
 end
 
 return Response

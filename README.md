@@ -42,7 +42,8 @@ Optional:
 
 - `MOLLY_LAVALINK_URL`, `MOLLY_LAVALINK_PASSWORD`,
   `MOLLY_LAVALINK_TIMEOUT_MS` — Molly connects to its localhost-only Lavalink
-  service; the password is never logged. Spotify credentials are isolated in
+  service; the password is never logged. The timeout is validated only when a
+  Lavalink URL or password is configured. Spotify credentials are isolated in
   `/etc/molly/lavalink.env`, which the runtime setup helper copies without
   displaying them.
 - `SEAWORLD_HEALTH_URL`
@@ -99,10 +100,15 @@ Molly -> persistence connector -> Unix socket driver -> SeaWorld local service -
 
 Molly does not open SeaWorld storage files. The connector negotiates API major
 1 and required capabilities, fails closed on transport errors, and performs no
-automatic write retry. `tests/seaworld_integration.lua` exercises the real
-service using an isolated test database. Request IDs correlate responses and
-do not guarantee deduplication or exactly-once writes. The old HTTP health
-client remains only for the Phase-0 unit tests and is not wired into startup.
+automatic write retry. The guild store rejects overlapping work for the same
+guild and queues other guilds because transactions share one socket connection.
+`tests/economy_integration.lua` exercises concurrent guild operations and
+`tests/seaworld_integration.lua` exercises the real service using an isolated
+test database. Request IDs correlate responses and do not guarantee
+deduplication or exactly-once writes. The old HTTP health client remains only
+for the Phase-0 unit tests and is not wired into startup. Staff action
+idempotency receipts retain the latest 1,000 requests per guild to bound the
+document size.
 
 ## Lavalink v4 foundation
 
@@ -141,7 +147,13 @@ music/Lavalink adapter contracts, and log redaction:
 
 ```sh
 lua5.1 tests/test.lua
+lua5.1 tests/socket_driver_timeout.lua
 ```
+
+The socket timeout test uses a mocked connection to verify that connection
+establishment is included in the configured per-call timeout. Failed initial
+Discord acknowledgements are logged with a sanitized result, including an HTTP
+status when the REST adapter returns one.
 
 ## Known Phase-0 limitations
 

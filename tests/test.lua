@@ -14,6 +14,9 @@ local LavalinkClient = require("src.music.lavalink_client")
 local SeaWorldConnector = require("src.persistence.seaworld_connector")
 local Health = require("src.health")
 local Response = require("src.discord.response")
+local SafeSync = require("src.discord.safe_sync")
+local StaffDirectory = require("src.staff.directory")
+local GuildStore = require("src.persistence.guild_store")
 
 local total, failed = 0, 0
 local function test(name, fn)
@@ -64,6 +67,26 @@ test("invalid optional Lavalink configuration does not enable music", function()
     MOLLY_LAVALINK_URL = "http://127.0.0.1:2333",
   }))
   equal(config.music.configuration_errors[1], "MOLLY_LAVALINK_PASSWORD")
+end)
+
+test("Lavalink timeout is ignored when music is not configured", function()
+  local config = assert(Config.load({
+    MOLLY_DISCORD_TOKEN = "fixture",
+    MOLLY_LAVALINK_TIMEOUT_MS = "1",
+  }))
+  equal(config.music.lavalink_timeout_ms, 1000)
+  equal(#config.music.configuration_errors, 0)
+  equal(MusicAdapter.new({ configuration_errors = config.music.configuration_errors }):status().detail, "not_configured")
+end)
+
+test("Lavalink timeout is validated when music is configured", function()
+  local config = assert(Config.load({
+    MOLLY_DISCORD_TOKEN = "fixture",
+    MOLLY_LAVALINK_URL = "http://127.0.0.1:2333",
+    MOLLY_LAVALINK_PASSWORD = "fixture",
+    MOLLY_LAVALINK_TIMEOUT_MS = "1",
+  }))
+  equal(config.music.configuration_errors[1], "MOLLY_LAVALINK_TIMEOUT_MS")
 end)
 
 test("SeaWorld unreachable is reported as unavailable", function()
@@ -192,6 +215,52 @@ test("SeaWorld persistence connector reports unavailable transport and closes gr
   assert(closed)
 end)
 
+test("guild store serializes the shared connection while isolating guild locks", function()
+  local connector = { in_transaction = false, pause_first_query = true }
+  function connector:query(payload)
+    if self.pause_first_query then
+      self.pause_first_query = false
+      coroutine.yield("query_paused")
+    end
+    return false, "not_found"
+  end
+  function connector:begin()
+    if self.in_transaction then return false, "transaction_state" end
+    self.in_transaction = true
+    return true
+  end
+  function connector:create_collection() return true end
+  function connector:insert(payload) return true, { id = "id:" .. payload.collection } end
+  function connector:update(payload)
+    assert(self.in_transaction)
+    assert(payload.set.data.guild == payload.collection:sub(#"molly_g_" + 1))
+    return true, { updated = true }
+  end
+  function connector:commit()
+    assert(self.in_transaction)
+    self.in_transaction = false
+    return true
+  end
+  function connector:rollback() self.in_transaction = false; return true end
+
+  local store, first_result, second_result = GuildStore.new(connector)
+  local first = coroutine.create(function()
+    first_result = { store:run("123", function() return true, "first", true end) }
+  end)
+  assert(coroutine.resume(first))
+  local second = coroutine.create(function()
+    second_result = { store:run("124", function() return true, "second", true end) }
+  end)
+  assert(coroutine.resume(second))
+  assert(coroutine.status(second) == "suspended", "other guild must wait for the shared connection")
+  local same_guild, same_reason = store:run("123", function() return true end)
+  assert(not same_guild and same_reason == "busy", "same guild work must remain protected")
+  assert(coroutine.resume(first))
+  assert(first_result[1] and first_result[2] == "first")
+  assert(second_result[1] and second_result[2] == "second")
+  assert(coroutine.status(second) == "dead")
+end)
+
 test("health status remains non-sensitive", function()
   local output = Status.message(true, { status = "unavailable" })
   assert(output:find("Molly: online", 1, true))
@@ -235,6 +304,7 @@ test("smoke commands route without a Discord connection", function()
     interaction_id = "1", interaction_token = "fixture",
     bot = { application_id = "2", rest = { create_interaction_response = function(_, _, _, payload)
       ack = payload.type == 5
+      return true
     end } },
     respond = function(_, value) response = value end,
     edit = function(_, value) edited = value end,
@@ -267,6 +337,93 @@ test("deferred responses are public by default and private only when requested",
   assert(private._molly_deferred and payloads[2].type == 5 and payloads[2].data.flags == 64)
   assert(reads == 0)
   assert(Response.defer(public) and #payloads == 2)
+end)
+
+test("failed defer REST results do not mark the interaction deferred", function()
+  local failures_logged = {}
+  local logger = { error = function(_, event, fields) failures_logged[#failures_logged + 1] = { event = event, fields = fields } end }
+  local defer_ok, defer_reason
+  local router = CommandRouter.new(logger)
+  router:register({ name = "probe", description = "Probe acknowledgement", execute = function(context)
+    defer_ok, defer_reason = Response.defer(context)
+  end })
+  local failures = {
+    { value = false }, { value = nil }, { value = { status = 503 } },
+    { value = { code = 500 } }, { value = { ok = false } },
+  }
+  for index = 1, #failures do
+    local result = failures[index].value
+    local context = {
+      bot = { application_id = "2", rest = { create_interaction_response = function() return result end } },
+      interaction_id = tostring(index), interaction_token = "fixture",
+      _molly_command_name = "probe",
+    }
+    assert(router:dispatch("probe", context))
+    assert(not defer_ok)
+    equal(defer_reason, "request_failed")
+    assert(not context._molly_deferred)
+  end
+  local context = {
+    bot = { application_id = "2", rest = { create_interaction_response = function() return nil end } },
+    interaction_id = "10", interaction_token = "fixture",
+  }
+  assert(not Response.acknowledge(context))
+  assert(not context._molly_deferred)
+  equal(failures_logged[3].event, "discord_interaction_ack_failed")
+  equal(failures_logged[3].fields.command, "probe")
+  equal(failures_logged[3].fields.reason, "http_503")
+end)
+
+test("safe command sync converts REST exceptions to sanitized failures", function()
+  local function command(name, description)
+    return { to_dict = function() return { type = 1, name = name, description = description } end }
+  end
+  local function bot_for(commands, remote, patch, post)
+    return {
+      client = { get_application_id = function() return "123" end },
+      command_tree = { commands = commands },
+      http = {
+        get = function() return remote end,
+        patch = patch,
+        post = post,
+      },
+    }
+  end
+  local patched, patch_error, patch_details = SafeSync.run(bot_for(
+    { command("fixture", "new description") },
+    { { id = "456", type = 1, name = "fixture", description = "old description" } },
+    function() error("fixture network detail") end
+  ))
+  assert(not patched)
+  equal(patch_error, "registration_unconfirmed")
+  equal(patch_details.command, "fixture")
+  equal(patch_details.field, "description")
+
+  local posted, post_error, post_details = SafeSync.run(bot_for(
+    { command("missing", "description") }, {}, nil,
+    function() error("fixture network detail") end
+  ))
+  assert(not posted)
+  equal(post_error, "registration_unconfirmed")
+  equal(post_details.command, "missing")
+end)
+
+test("staff idempotency receipts retain only the latest thousand actions", function()
+  local data = { staff = {}, receipts = {} }
+  local store = { run = function(_, _, fn) return fn(data) end }
+  local directory = StaffDirectory.new(store, function() return 2000000000 end)
+  for index = 1, 1001 do
+    local action = index % 2 == 1 and "add" or "remove"
+    local ok = directory:apply("123", "456", "789", action, nil, tostring(index))
+    assert(ok, "staff mutation " .. index)
+  end
+  local count = 0
+  for _ in pairs(data.receipts) do count = count + 1 end
+  equal(count, 1000)
+  assert(data.receipts["1"] == nil)
+  assert(data.receipts["1001"] ~= nil)
+  local replayed, entry = directory:apply("123", "456", "789", "add", nil, "1001")
+  assert(replayed and entry.active)
 end)
 
 test("ping uses a plain response fallback if defer is unavailable", function()
@@ -310,6 +467,7 @@ test("health command defers before running checks and edits the final response",
     interaction_id = "1", interaction_token = "fixture",
     bot = { application_id = "2", rest = { create_interaction_response = function()
       order[#order + 1] = "defer"
+      return true
     end } },
     edit = function(_, text) edited = text; order[#order + 1] = "edit" end,
   }
@@ -379,7 +537,7 @@ test("Discord bootstrap forwards lifecycle, command routing, and shutdown", func
   local response
   fake_bot.registered.health.callback({
     interaction_id = "1", interaction_token = "fixture",
-    bot = { application_id = "2", rest = { create_interaction_response = function() end } },
+    bot = { application_id = "2", rest = { create_interaction_response = function() return true end } },
     edit = function(_, value, options) response = { content = value, options = options } end,
     respond = function(_, value, options) response = { content = value, options = options } end,
   })
@@ -474,6 +632,17 @@ test("Lavalink v4 client reports unavailable and healthy states", function()
     transport = function() return { code = 200 }, "3.7.0" end,
   })
   equal(unsupported_client:health().detail, "unsupported_version")
+end)
+
+test("Lavalink rejects undocumented search prefixes without issuing a request", function()
+  local requests = 0
+  local client = LavalinkClient.new({ url = "http://127.0.0.1:2333", password = "fixture", transport = function()
+    requests = requests + 1
+    return { code = 200 }, "{}"
+  end })
+  local ok, reason = client:resolve("unsupportedsearch:query")
+  assert(not ok and reason == "unsupported_search_prefix")
+  equal(requests, 0)
 end)
 
 test("music adapter is provider-neutral and mockable", function()

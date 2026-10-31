@@ -66,6 +66,26 @@ local function run()
   assert(ok and value.wallet == 10 and value.bank == 30, "concurrent sender balance")
   ok, value = ledger:balance("123", "789")
   assert(ok and value.wallet == 60, "concurrent recipient balance")
+  local guild_results, guild_complete = {}, 0
+  local function submit_guild(index, guild)
+    coroutine.wrap(function()
+      local success, result = ledger:change(guild, "456", tostring(1300 + index), "daily")
+      guild_results[index] = { success, result }
+      guild_complete = guild_complete + 1
+    end)()
+  end
+  submit_guild(1, "124")
+  submit_guild(2, "125")
+  while guild_complete < 2 do
+    local thread, timer = coroutine.running(), uv.new_timer()
+    timer:start(10, 0, function() timer:close(); assert(coroutine.resume(thread)) end)
+    coroutine.yield()
+  end
+  assert(guild_results[1][1] and guild_results[2][1], "operations in different guilds must wait, not fail busy")
+  ok, value = ledger:balance("124", "456")
+  assert(ok and value.wallet == 100, "first guild transaction completes")
+  ok, value = ledger:balance("125", "456")
+  assert(ok and value.wallet == 100, "second guild transaction completes")
   local query_ok, rows = c:query({ collection = "molly_g_123", limit = 2 })
   assert(query_ok and #rows.rows == 1)
   local record_id = rows.rows[1].id

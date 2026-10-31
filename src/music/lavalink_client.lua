@@ -146,11 +146,13 @@ function Client:_schedule_reconnect()
 end
 
 function Client:resolve(query)
-  if not json then return false, "json_unavailable" end
   if type(query) ~= "string" or query:match("^%s*$") or #query > 500 then return false, "invalid_query" end
-  local has_lavalink_search_prefix = query:match("^[%a][%w+%.%-]*search:") ~= nil
+  local has_search_prefix = query:match("^[%a][%w+%.%-]*search:") ~= nil
+  local supported_search_prefix = query:match("^ytsearch:") ~= nil or query:match("^spsearch:") ~= nil
+  if has_search_prefix and not supported_search_prefix then return false, "unsupported_search_prefix" end
+  if not json then return false, "json_unavailable" end
   local identifier = query:match("^https?://") and query or
-    (has_lavalink_search_prefix and query or ("ytsearch:" .. query))
+    (supported_search_prefix and query or ("ytsearch:" .. query))
   local ok, result = self:_request("GET", "/v4/loadtracks?identifier=" .. encode(identifier))
   if not ok then return false, result end
   local load_type = result and (result.loadType or result.load_type)

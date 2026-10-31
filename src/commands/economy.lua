@@ -18,9 +18,8 @@ function Economy.register(router, ledger, options)
       if not ctx.guild or not ctx.author or not ctx.author.id then
         ctx:respond("This command requires a server member.", { ephemeral = true }); return
       end
-      local acknowledged, ack_error = Response.defer(ctx)
+      local acknowledged = Response.defer(ctx)
       if not acknowledged then
-        if logger then logger:error("economy_interaction_ack_failed", { command = name, reason = ack_error }) end
         pcall(ctx.respond, ctx, "Molly could not start that economy action. Please try again.", { ephemeral = true })
         return
       end

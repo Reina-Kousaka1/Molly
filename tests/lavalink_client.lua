@@ -40,6 +40,17 @@ test("Spotify search prefixes pass through and authentication failures stay sani
   assert(health.status == "unavailable" and health.detail == "authentication_failed")
 end)
 
+test("unsupported Lavalink search prefixes are rejected before transport", function()
+  local requests = 0
+  local client = Client.new({ url = "http://127.0.0.1:2333", password = "fixture-only", transport = function()
+    requests = requests + 1
+    return { code = 200 }, json.encode({ loadType = "empty", data = {} })
+  end })
+  local ok, reason = client:resolve("unsupportedsearch:query")
+  assert(not ok and reason == "unsupported_search_prefix")
+  assert(requests == 0)
+end)
+
 test("player updates use the READY session, guild route, voice payload, and v4 JSON", function()
   local captured
   local client = Client.new({ url = "http://127.0.0.1:2333", password = "fixture-only", transport = function(method, url, options)

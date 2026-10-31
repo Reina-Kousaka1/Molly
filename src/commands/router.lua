@@ -28,6 +28,9 @@ function Router:dispatch(name, context)
   if not definition then
     return false, "unknown_command"
   end
+  if type(context) == "table" and self.logger and context._molly_logger == nil then
+    context._molly_logger = self.logger
+  end
   local ok = pcall(definition.execute, context)
   if not ok then
     if self.logger then
