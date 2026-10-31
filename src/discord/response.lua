@@ -53,16 +53,24 @@ end
 -- Deferred responses are public by default, matching ordinary Discord
 -- command responses. Pass { ephemeral = true } only for private workflows.
 function Response.defer(ctx, options)
-  if type(ctx) ~= "table" then return false end
+  if type(ctx) ~= "table" then return false, "invalid_context" end
   if ctx._molly_deferred then return true end
-  if ctx._molly_initial_response_sent then return false end
+  if ctx._molly_initial_response_sent then return false, "already_responded" end
   local bot = ctx.bot
-  if not bot or not bot.rest or not bot.application_id or not ctx.interaction_id or not ctx.interaction_token then return false end
-  local data = {}
-  if options and options.ephemeral == true then data.flags = 64 end
-  local sent = pcall(bot.rest.create_interaction_response, bot.rest, ctx.interaction_id, ctx.interaction_token,
-    { type = 5, data = data })
-  if not sent then return false end
+  if not bot or not bot.rest or type(bot.rest.create_interaction_response) ~= "function" then
+    return false, "missing_rest_client"
+  end
+  if not bot.application_id then return false, "missing_application_id" end
+  if not ctx.interaction_id then return false, "missing_interaction_id" end
+  if not ctx.interaction_token then return false, "missing_interaction_token" end
+
+  -- Discord accepts type 5 without a data object for a public defer. Keeping
+  -- data absent also avoids encoders serializing an empty Lua table as []
+  -- where Discord expects an object. Only send data when it has a real field.
+  local payload = { type = 5 }
+  if options and options.ephemeral == true then payload.data = { flags = 64 } end
+  local sent = pcall(bot.rest.create_interaction_response, bot.rest, ctx.interaction_id, ctx.interaction_token, payload)
+  if not sent then return false, "request_failed" end
   -- A successful callback request is Discord's acknowledgement. Fetching the
   -- original response here adds a second network dependency after the ack and
   -- can cause callers to return without ever editing the deferred response.

@@ -262,7 +262,7 @@ test("deferred responses are public by default and private only when requested",
   end
   local public, private = context(), context()
   assert(Response.defer(public))
-  assert(public._molly_deferred and payloads[1].type == 5 and payloads[1].data.flags == nil)
+  assert(public._molly_deferred and payloads[1].type == 5 and payloads[1].data == nil)
   assert(Response.defer(private, { ephemeral = true }))
   assert(private._molly_deferred and payloads[2].type == 5 and payloads[2].data.flags == 64)
   assert(reads == 0)

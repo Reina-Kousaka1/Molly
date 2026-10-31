@@ -38,7 +38,7 @@ test("daily acknowledges first and replies once with the public economy embed", 
   local callback_count, result = 0, nil
   local rest = { create_interaction_response = function(_, _, _, payload)
     callback_count = callback_count + 1
-    assert(payload.type == 5 and payload.data.flags == nil)
+    assert(payload.type == 5 and payload.data == nil, "public defer omits optional callback data")
     return true
   end }
   local ledger = { change = function(_, guild, user, interaction, kind)
