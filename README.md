@@ -1,5 +1,10 @@
 # Molly – Phase 0 Bootstrap
 
+[![CI](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml/badge.svg)](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Lua](https://img.shields.io/badge/Lua-5.1-2C2D72.svg?logo=lua&logoColor=white)](https://www.lua.org/)
+[![Platform](https://img.shields.io/badge/Platform-Raspberry_Pi_ARM64-A22846.svg?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+
 **Integration status:** the local Unix-socket transport and connector are under
 validation; the systemd templates are not yet installed. The Phase-0 notes
 below describe the earlier bootstrap and do not establish production readiness.
@@ -100,8 +105,7 @@ Molly -> persistence connector -> Unix socket driver -> SeaWorld local service -
 Molly does not open SeaWorld storage files. The connector negotiates API major
 1 and required capabilities, fails closed on transport errors, and performs no
 automatic write retry. `tests/seaworld_integration.lua` exercises the real
-service using an isolated test database. Request IDs correlate responses and
-do not guarantee deduplication or exactly-once writes. The old HTTP health
+service using an isolated test database. Request IDs correlate responses and do not guarantee deduplication or exactly-once writes. The old HTTP health
 client remains only for the Phase-0 unit tests and is not wired into startup.
 
 ## Lavalink v4 foundation
@@ -128,7 +132,7 @@ docker compose -f ops/molly-container.yml up -d
 
 The setup helper reads credentials from Tori's Lavalink container but does not
 change Tori or print secret values. It installs `/etc/molly/lavalink.env` as
-`toriaa:toriaa` mode `0600`. The Lavalink service publishes no ports and binds
+toriaa:toriaa` mode `0600`. The Lavalink service publishes no ports and binds
 only on loopback.
 
 ## Tests
