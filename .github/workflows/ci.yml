@@ -26,7 +26,9 @@ jobs:
           lua5.1 -v
 
       - name: Run tests
-        run: lua5.1 tests/test.lua
+        run: |
+          lua5.1 tests/test.lua
+          lua5.1 tests/developer_lifecycle.lua
 
       - name: Check whitespace
         run: git diff --check
