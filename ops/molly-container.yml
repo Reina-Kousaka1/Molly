@@ -8,7 +8,8 @@ services:
     image: molly:local
     container_name: molly-bot
     pull_policy: never
-    restart: unless-stopped
+    # /shutdown exits 0 and must stay stopped; /restart and /update use non-zero lifecycle exits.
+    restart: "on-failure:5"
     init: true
     network_mode: host
     user: "999:983"
