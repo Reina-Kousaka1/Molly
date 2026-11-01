@@ -12,6 +12,7 @@ local DiscordBootstrap = require("src.discord.bootstrap")
 local MusicAdapter = require("src.music.adapter")
 local LavalinkClient = require("src.music.lavalink_client")
 local SeaWorldConnector = require("src.persistence.seaworld_connector")
+local GuildStore = require("src.persistence.guild_store")
 local Health = require("src.health")
 local Response = require("src.discord.response")
 
@@ -190,6 +191,208 @@ test("SeaWorld persistence connector reports unavailable transport and closes gr
   equal(reason, "connect_failed")
   assert(connector:close())
   assert(closed)
+end)
+
+local function persistence_copy(value)
+  if type(value) ~= "table" then return value end
+  local result = {}
+  for key, item in pairs(value) do result[key] = persistence_copy(item) end
+  return result
+end
+
+local function persistence_fixture(options)
+  options = options or {}
+  local base = { data = {}, sessions = {}, commits = {}, rollbacks = {}, closes = 0, fail_guild = options.fail_guild }
+  for _, guild in ipairs({ "10", "20", "30" }) do
+    base.data[guild] = { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  end
+  function base:session()
+    local session = { base = self, in_transaction = false }
+    self.sessions[#self.sessions + 1] = session
+    function session:query(request)
+      self.guild = request.collection:match("^molly_g_(%d+)$")
+      assert(self.guild)
+      return true, { rows = { { id = "doc-" .. self.guild } } }
+    end
+    function session:begin()
+      assert(not self.in_transaction)
+      self.in_transaction = true
+      local source = self.base.data[self.guild]
+      self.tx_data = persistence_copy(source)
+      return true
+    end
+    function session:get()
+      assert(self.in_transaction)
+      if self.base.fail_guild == self.guild then
+        self.in_transaction = false -- mirrors a transport that discarded this session
+        self.tx_data = nil
+        return false, "timeout"
+      end
+      return true, { document = { data = self.tx_data } }
+    end
+    function session:update()
+      assert(self.in_transaction)
+      return true, { updated = true }
+    end
+    function session:commit()
+      assert(self.in_transaction)
+      self.base.data[self.guild] = self.tx_data
+      self.base.commits[self.guild] = (self.base.commits[self.guild] or 0) + 1
+      self.in_transaction, self.tx_data = false, nil
+      return true
+    end
+    function session:rollback()
+      assert(self.in_transaction)
+      self.base.rollbacks[self.guild] = (self.base.rollbacks[self.guild] or 0) + 1
+      self.in_transaction, self.tx_data = false, nil
+      return true
+    end
+    function session:close()
+      self.base.closes = self.base.closes + 1
+      self.closed = true
+      if self.in_transaction then self.base.leaked = (self.base.leaked or 0) + 1 end
+      self.in_transaction, self.tx_data = false, nil
+      return true
+    end
+    return session
+  end
+  return base
+end
+
+test("guild store rejects overlapping requests only within the same guild", function()
+  local base, store = persistence_fixture(), nil
+  store = GuildStore.new(base)
+  local duplicate_ok, duplicate_reason, independent_ok
+  local ok = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 1 }
+    duplicate_ok, duplicate_reason = store:run("10", function() return true, "unexpected", false end)
+    independent_ok = store:run("20", function(other)
+      assert(base.sessions[1].in_transaction, "Guild A remains in its own transaction")
+      other.accounts["201"] = { wallet = 2 }
+      return true, "saved", true
+    end)
+    return true, "saved", true
+  end)
+  assert(ok and independent_ok)
+  assert(not duplicate_ok and duplicate_reason == "busy")
+  assert(base.data["10"].accounts["101"].wallet == 1)
+  assert(base.data["20"].accounts["201"].wallet == 2)
+  assert(base.commits["10"] == 1 and base.commits["20"] == 1)
+  assert(#base.sessions == 2 and base.sessions[1] ~= base.sessions[2])
+end)
+
+test("guild store transactions have isolated ownership through commit and rollback", function()
+  local base, store = persistence_fixture(), nil
+  store = GuildStore.new(base)
+  local session_a, session_b
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    local committed = store:run("20", function(other)
+      session_a, session_b = base.sessions[1], base.sessions[2]
+      assert(session_a.in_transaction and session_b.in_transaction and session_a ~= session_b)
+      other.accounts["201"] = { wallet = 20 }
+      return true, "commit", true
+    end)
+    assert(committed and base.commits["20"] == 1)
+    return false, "abort"
+  end)
+  assert(not ok and reason == "abort")
+  assert(base.rollbacks["10"] == 1 and base.commits["20"] == 1)
+  assert(base.data["10"].accounts["101"] == nil and base.data["20"].accounts["201"].wallet == 20)
+  assert(not session_a.in_transaction and not session_b.in_transaction and not base.leaked)
+end)
+
+test("a failed or timed-out guild session cannot damage another guild or be reused", function()
+  local base, store = persistence_fixture({ fail_guild = "10" }), nil
+  store = GuildStore.new(base)
+  local a_ok, a_reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "save", true
+  end)
+  assert(not a_ok and a_reason == "unavailable")
+  local failed_session = base.sessions[1]
+  assert(not failed_session.in_transaction and failed_session.closed)
+  local b_ok = store:run("20", function(data)
+    data.accounts["201"] = { wallet = 20 }
+    return true, "save", true
+  end)
+  assert(b_ok and base.data["20"].accounts["201"].wallet == 20)
+  base.fail_guild = nil
+  local retry_ok = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 11 }
+    return true, "save", true
+  end)
+  assert(retry_ok and base.data["10"].accounts["101"].wallet == 11)
+  assert(#base.sessions == 3 and base.sessions[1] ~= base.sessions[3])
+  assert(base.closes == 3 and not base.leaked)
+end)
+
+test("connector sessions fork the connection and keep transaction lifecycle local", function()
+  local next_id, states = 0, {}
+  local driver = {}
+  function driver:fork()
+    next_id = next_id + 1
+    local id = next_id
+    states[id] = { in_transaction = false, commits = 0, rollbacks = 0 }
+    return {
+      health = function()
+        return { status = "healthy", api_version = "1.0.0", capabilities = { native_queries = true, field_updates = true, transactions = true } }
+      end,
+      begin = function() states[id].in_transaction = true; return true end,
+      commit = function() states[id].commits = states[id].commits + 1; states[id].in_transaction = false; return true end,
+      rollback = function() states[id].rollbacks = states[id].rollbacks + 1; states[id].in_transaction = false; return true end,
+      close = function() states[id].closed = true; return true end,
+    }
+  end
+  local root = SeaWorldConnector.new({ driver = driver })
+  local a = assert(root:session())
+  local b = assert(root:session())
+  assert(a ~= b and a.driver ~= b.driver)
+  assert(a:begin() and b:begin())
+  assert(a:commit())
+  assert(states[1].commits == 1 and states[2].commits == 0 and states[2].in_transaction)
+  assert(a:close())
+  assert(b:rollback())
+  assert(states[1].rollbacks == 0 and states[2].rollbacks == 1 and not states[2].in_transaction)
+end)
+
+test("connector discards timed-out sessions and retries on a fresh connection", function()
+  local next_id, drivers = 0, {}
+  local root = SeaWorldConnector.new({ driver = {
+    fork = function()
+      next_id = next_id + 1
+      local driver = { id = next_id, in_transaction = false }
+      drivers[next_id] = driver
+      function driver:health()
+        return { status = "healthy", api_version = "1.0.0", capabilities = { native_queries = true, field_updates = true, transactions = true } }
+      end
+      function driver:begin() self.in_transaction = true; return true end
+      function driver:operation()
+        self:close() -- the socket driver closes its connection on timeout/error
+        return false, "timeout"
+      end
+      function driver:commit() self.in_transaction = false; return true end
+      function driver:rollback() self.in_transaction = false; return true end
+      function driver:close() self.closed, self.in_transaction = true, false; return true end
+      return driver
+    end,
+  } })
+  local timed_out = assert(root:session())
+  assert(timed_out:begin())
+  local ok = timed_out:get({ collection = "records", id = "1" })
+  assert(not ok and not timed_out.in_transaction and drivers[1].closed)
+  assert(timed_out:close())
+  local reconnected = assert(root:session())
+  assert(reconnected ~= timed_out and reconnected.driver ~= timed_out.driver)
+  assert(reconnected:begin() and reconnected:commit())
+  assert(not drivers[1].in_transaction and not drivers[2].in_transaction)
+end)
+
+test("guild store fails closed when the connector cannot create isolated sessions", function()
+  local store = GuildStore.new({ session = function() return nil, "capability_unavailable" end })
+  local ok, reason = store:run("10", function() error("must not run") end)
+  assert(not ok and reason == "capability_unavailable")
+  assert(not store.busy_guilds["10"])
 end)
 
 test("health status remains non-sensitive", function()
