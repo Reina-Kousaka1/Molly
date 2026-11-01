@@ -1,155 +1,225 @@
-# Molly – Phase 0 Bootstrap
+# Molly 🖤
 
 [![CI](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml/badge.svg)](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Lua](https://img.shields.io/badge/Lua-5.1-2C2D72.svg?logo=lua&logoColor=white)](https://www.lua.org/)
 [![Platform](https://img.shields.io/badge/Platform-Raspberry_Pi_ARM64-A22846.svg?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
 
-**Integration status:** the local Unix-socket transport and connector are under
-validation; the systemd templates are not yet installed. The Phase-0 notes
-below describe the earlier bootstrap and do not establish production readiness.
-For the transport contract see `../seaworld.db/docs/local-transport.md`.
+Molly is a Lua/Luvit Discord bot built around moderation, staff management, economy, music, and reliable server operations.
 
-Molly is a Lua/Luvit Discord bot. The foundation contains a separately testable
-Discord bootstrap, event routing, command routing, structured logs, graceful
-shutdown, and a separate SeaWorld health client. It deliberately does not
-contain product features.
+She combines a modular Discord command layer with persistent guild data through SeaWorld DB, Lavalink-powered music, structured logging, and a Raspberry Pi ARM64 deployment target.
 
-## Runtime and dependencies
+> **Development status:** Molly is actively evolving. Features and operational contracts described here reflect the repository, but production rollout of individual subsystems should still be verified against the running deployment.
 
-Use Luvit **2.18.1** (LuaJIT/libuv) locally in `runtime/`; do not install it
-globally. Then install the application dependency into this project:
+## Features
 
-```sh
-./runtime/lit install filispeen/discord.lua
+### Moderation
+
+Molly provides moderation foundations for common guild-management workflows, including moderation cases and persistent guild-scoped state. The command layer is designed around Discord interactions with centralized response handling and safe command synchronization.
+
+### Economy
+
+The economy layer provides persistent guild/user state and transaction-oriented operations. Economy writes are routed through Molly's persistence boundary rather than directly accessing database storage.
+
+The implementation is designed to preserve request correlation and avoid reporting successful writes when persistence fails.
+
+### Staff management
+
+Molly includes a staff directory and staff-management domain alongside moderation and economy. Staff state is persisted per guild through the same storage boundary.
+
+### Music
+
+Molly has a Lavalink v4 music foundation with support for YouTube-backed search and Spotify resolution through LavaSrc when configured.
+
+The repository contains the Lavalink client/adapter and the operational configuration used by Molly's Compose stack. Music configuration remains isolated from the core bot so deployments without a valid music configuration can fail safely rather than leaking credentials.
+
+### Discord interaction layer
+
+Molly uses a centralized interaction/response layer for command acknowledgements, edits, follow-ups, and embeds. Command synchronization includes safeguards intended to avoid duplicate or conflicting application-command registrations.
+
+### Presence and personality
+
+Molly has her own presence/personality layer rather than borrowing status text from other bots. Seasonal presentation may change independently of the underlying moderation, economy, staff, and music behavior.
+
+## Architecture
+
+At a high level:
+
+```text
+Discord
+   │
+   ▼
+Molly / Lua + Luvit
+   ├── command & event routing
+   ├── response / embed layer
+   ├── moderation
+   ├── staff management
+   ├── economy
+   ├── music ───────────────► Lavalink v4
+   └── persistence connector
+              │
+              ▼
+        Unix domain socket
+              │
+              ▼
+      SeaWorld local service
+              │
+              ▼
+        SeaWorld Public API
+              │
+              ▼
+         SeaWorld engine
 ```
 
-The local installation uses Luvit 2.18.1, Lit 3.8.5, and `discord.lua` 1.2.2
-(upstream tag resolves to `9cd880d10f96253d1d1cb347416ef01111479497`).
-ARM64 voice/native dependencies have not been validated.
+Molly does **not** open SeaWorld storage files directly. Persistence goes through the local SeaWorld service and its public API boundary.
 
-`discord.lua` was selected because it provides Gateway operation, slash
-commands, interaction responses, Components, and voice support in its Luvit
-implementation. Discordia remains a mature Gateway/voice option, but does not
-provide current application-command or component support natively.
+Request IDs are used for correlation. They must not be treated as a blanket exactly-once guarantee unless the underlying operation explicitly provides that contract.
 
-## Configuration
+## Project structure
 
-The runtime reads environment variables only. The intended production file is
-`/etc/molly/molly.env` (mode `0600`, owned by `root:root`); it is never read
-directly by the application and must not be committed.
+```text
+.
+├── .github/workflows/   # GitHub Actions CI
+├── docs/                # Project and operational documentation
+├── ops/                 # Docker/Compose and service configuration
+├── src/                 # Molly source modules
+├── tests/               # Self-contained Lua test suite
+├── Dockerfile           # Raspberry Pi / ARM64 image
+├── molly.lua            # Application entry point
+├── .env.example         # Variable names only — never real secrets
+└── LICENSE              # AGPL-3.0
+```
 
-Required:
+## Runtime
+
+Molly is built around **Lua 5.1 / LuaJIT and Luvit**. The deployment image targets **Linux ARM64**, matching the Raspberry Pi environment used for Molly.
+
+The project has historically used Luvit 2.18.1 and `discord.lua` for Discord Gateway/application-command functionality.
+
+## Configuration and secrets
+
+Runtime configuration is supplied through environment variables. Real credentials must never be committed to this repository.
+
+The checked-in `.env.example` contains variable names/examples only.
+
+Core configuration includes the Discord token plus optional SeaWorld and Lavalink settings. Depending on the deployed feature set, variables can include:
 
 - `MOLLY_DISCORD_TOKEN`
+- `MOLLY_SEAWORLD_SOCKET`
+- `SEAWORLD_TIMEOUT_MS`
+- `SEAWORLD_RETRY_ATTEMPTS`
+- `MOLLY_LAVALINK_URL`
+- `MOLLY_LAVALINK_PASSWORD`
+- `MOLLY_LAVALINK_TIMEOUT_MS`
 
-Optional:
+Production credentials are kept outside Git and should retain restrictive filesystem permissions.
 
-- `MOLLY_LAVALINK_URL`, `MOLLY_LAVALINK_PASSWORD`,
-  `MOLLY_LAVALINK_TIMEOUT_MS` — Molly connects to its localhost-only Lavalink
-  service; the password is never logged. Spotify credentials are isolated in
-  `/etc/molly/lavalink.env`, which the runtime setup helper copies without
-  displaying them.
-- `SEAWORLD_HEALTH_URL`
-- `SEAWORLD_TIMEOUT_MS` (default `1000`, range `100..30000`)
-- `SEAWORLD_RETRY_ATTEMPTS` (default `1`, range `1..3`)
-- `MOLLY_SEAWORLD_SOCKET` — absolute path of the actual local socket. Required
-  for Molly's startup preflight; the systemd template supplies it.
+Never put Discord tokens, Spotify credentials, Lavalink passwords, database material, or production `.env` contents into commits, Docker images, test fixtures, or logs.
 
-`SEAWORLD_HEALTH_URL` must not contain credentials. Molly currently has no
-defined SeaWorld authentication contract and therefore cannot safely infer one.
+## SeaWorld persistence
 
-Copy the variable names from `.env.example`; do not put values in it.
+Molly's persistence path is intentionally explicit:
 
-## Local start
+```text
+Molly
+  → persistence connector
+  → Unix socket driver
+  → SeaWorld local service
+  → SeaWorld Public API
+  → SeaWorld engine
+```
 
-After placing the Luvit runtime and dependencies locally and after an operator
-has populated `/etc/molly/molly.env` on the Pi:
+The connector negotiates the supported API contract and fails closed on transport/configuration failures. Molly should not fabricate successful persistence operations when SeaWorld is unavailable.
 
-Use the validated systemd unit after its prerequisites and dedicated identity
-have been provisioned. Do not source the root-only secret file in a shell.
+Integration tests that exercise the real service must use an isolated test database rather than production data.
 
-Logs are JSON-shaped lines on standard output. Secrets are redacted by the
-logger and are not included in the status command.
+## Lavalink
 
-## Docker image (Raspberry Pi ARM64)
+Molly's Lavalink v4 operational files live under `ops/`. The current stack is designed to keep Lavalink local to Molly's runtime environment and keep credentials outside the repository.
 
-Build the local image from the checked-in Luvit runtime and application files:
+Before changing music infrastructure, inspect the current Compose/configuration state instead of assuming that a development configuration matches production.
+
+## Docker / Raspberry Pi ARM64
+
+Build the bot image with:
 
 ```sh
 docker build --platform linux/arm64 -t molly:local .
 ```
 
-The image runs as UID/GID `999:983`, matching the existing `molly` account on
-the Pi. It contains no token, environment file, test data, SeaWorld database,
-or SeaWorld service. At runtime, supply `/etc/molly/molly.env` through Docker's
-`--env-file` option and bind-mount `/run/seaworld-molly/seaworld.sock` at the
-same path; the container must also be able to traverse the socket's
-owner-restricted runtime directory. Do not run this container at the same time
-as `molly.service`, since both would log in as the same Discord bot.
+The image must not contain production secrets or SeaWorld database files.
 
-## Smoke commands
-
-When the Discord library successfully registers application commands, Molly
-exposes only `/ping`, `/about`, and `/health`. These are technical commands.
-SeaWorld health is obtained from the local service and negotiated API contract.
-
-## SeaWorld boundary and health contract
-
-The only Molly-to-SeaWorld path is:
-
-```text
-Molly -> persistence connector -> Unix socket driver -> SeaWorld local service -> Public API -> SeaWorld engine
-```
-
-Molly does not open SeaWorld storage files. The connector negotiates API major
-1 and required capabilities, fails closed on transport errors, and performs no
-automatic write retry. `tests/seaworld_integration.lua` exercises the real
-service using an isolated test database. Request IDs correlate responses and do not guarantee deduplication or exactly-once writes. The old HTTP health
-client remains only for the Phase-0 unit tests and is not wired into startup.
-
-## Lavalink v4 foundation
-
-`ops/lavalink/` contains Molly's Lavalink v4 service, included by
-`ops/molly-container.yml`. The image is pinned to v4.2.2 and its manifest
-digest. Host networking lets Lavalink use the working Pi resolver, while the
-server binds only to `127.0.0.1:2333`. Compose waits for its authenticated
-`/version` healthcheck before starting Molly. The YouTube source and LavaSrc
-Spotify resolver use the plugin releases verified on the Pi's existing
-Lavalink node; ordinary text search uses YouTube, while explicit `spsearch:`
-queries and Spotify URLs resolve through LavaSrc and mirror to YouTube. Artist
-enrichment is disabled to avoid an extra Spotify API request that returned
-HTTP 403.
-
-Prepare the restricted Lavalink credential file without displaying its values,
-then validate and start only Molly's Compose project:
+Molly's operational Compose configuration lives under `ops/`. Validate the active configuration before updating a running deployment:
 
 ```sh
-python3 ops/configure_lavalink_env.py
 docker compose -f ops/molly-container.yml config --quiet
-docker compose -f ops/molly-container.yml up -d
 ```
 
-The setup helper reads credentials from Tori's Lavalink container but does not
-change Tori or print secret values. It installs `/etc/molly/lavalink.env` as
-toriaa:toriaa` mode `0600`. The Lavalink service publishes no ports and binds
-only on loopback.
+Do not start two Molly instances with the same Discord token. In particular, a legacy/systemd instance and a Docker instance must not run simultaneously.
 
 ## Tests
 
-The current Pi has stock Lua 5.1 but no installed Lua test framework. The
-self-contained test runner avoids adding global packages and exercises config
-validation, unavailable DB, timeout propagation, valid/malformed responses,
-offline Discord bootstrap, event and command routing, shutdown, status output,
-music/Lavalink adapter contracts, and log redaction:
+The repository contains a self-contained Lua test runner:
 
 ```sh
 lua5.1 tests/test.lua
 ```
 
-## Known Phase-0 limitations
+The suite covers Molly's core modules and contracts, including Discord routing/response behavior, configuration, persistence boundaries, economy/moderation/staff behavior, music adapters, and failure handling as those areas evolve.
 
-- Both service templates require installation and a dedicated `molly` account.
-- The root-only token configuration and production services require privileged
-  setup and have not yet been verified by this unprivileged session.
-- ARM64 voice dependencies and real Discord login have not been validated.
+Tests that require a real external service should remain isolated from production resources.
+
+## Continuous Integration
+
+GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`.
+
+The workflow currently performs:
+
+```sh
+lua5.1 tests/test.lua
+git diff --check
+```
+
+CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or production SeaWorld access.
+
+A green CI run verifies the repository test contract; it does not by itself prove that a particular Raspberry Pi deployment is running the same commit or configuration.
+
+## Reliability principles
+
+Molly is built with a few important operational rules:
+
+- guild state must remain isolated between servers;
+- Discord interactions should be acknowledged before slow I/O can invalidate them;
+- persistence failures must fail closed rather than pretending a write succeeded;
+- idempotency/receipt data must remain bounded where applicable;
+- secrets must not be logged;
+- reconnect/startup paths must avoid duplicate command registrations or duplicate background workers;
+- deployments must never accidentally run two bot instances with the same token.
+
+## Development
+
+Before changing Molly:
+
+1. inspect the existing implementation and tests;
+2. preserve unrelated local work;
+3. add regression tests for bug fixes;
+4. run the relevant test suite;
+5. run `git diff --check`;
+6. review the complete diff before committing;
+7. never commit secrets or runtime data.
+
+Keep feature work separated from infrastructure changes where practical. Changes to SeaWorld, Lavalink, or Raspberry Pi operations should not be made merely because a Molly feature happens to depend on them.
+
+## Security
+
+If you discover a security issue, avoid publishing credentials, tokens, private server data, or exploitable production details in a public issue.
+
+Molly's repository is public. Treat every committed file as public information.
+
+## License
+
+Molly is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE).
+
+---
+
+<p align="center"><strong>Molly 🖤</strong><br>Moderation, music, persistence — and a little mystery.</p>
