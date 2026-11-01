@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose an improvement or new capability for Molly
+title: "[Feature]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. For large architecture changes, explain the problem and desired behavior before prescribing an implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Desired behavior
+      description: Describe what Molly should do from a user's or operator's perspective.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Discord commands / interactions
+        - Moderation
+        - Staff management
+        - Economy
+        - SeaWorld / persistence
+        - Music / Lavalink
+        - Docker / deployment
+        - Developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional — other approaches or workarounds you considered.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility or operational impact
+      description: Mention configuration, persistence, deployment, security, or backward-compatibility concerns if relevant.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and pull requests for similar proposals.
+          required: true
+        - label: This request does not contain secrets or private data.
+          required: true
