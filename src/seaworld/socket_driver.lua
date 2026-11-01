@@ -5,7 +5,6 @@ local uv = require("uv")
 local Driver = {}
 Driver.__index = Driver
 local MAX_FRAME = 1024 * 1024
-local counter = 0
 
 local function object_copy(value)
   local copy = {}
@@ -34,7 +33,13 @@ end
 
 function Driver.new(options)
   assert(type(options.path) == "string" and options.path ~= "", "socket path required")
-  return setmetatable({ path = options.path, timeout = options.timeout_ms or 1000 }, Driver)
+  return setmetatable({ path = options.path, timeout = options.timeout_ms or 1000, request_sequence = 0 }, Driver)
+end
+
+-- A fork has no socket, buffer, request, or transaction state in common with
+-- its parent. Each persistence operation therefore owns one SeaWorld session.
+function Driver:fork()
+  return Driver.new({ path = self.path, timeout_ms = self.timeout })
 end
 
 function Driver:initialize() return true end
@@ -63,8 +68,8 @@ function Driver:_call(operation, payload, keep, timeout)
     local call_timeout = timeout or self.timeout
     local connected, reason = self:_open(call_timeout)
     if not connected then return false, reason end
-    counter = counter + 1
-    local id = tostring(counter)
+    self.request_sequence = self.request_sequence + 1
+    local id = tostring(self.request_sequence)
     local body = object_copy(payload)
     if type(body.document) == "table" and body.document ~= json.null then body.document = object_copy(body.document) end
     if type(body.set) == "table" and body.set ~= json.null then body.set = object_copy(body.set) end

@@ -6,7 +6,7 @@ local function valid_id(value)
 end
 
 function Store.new(connector)
-  return setmetatable({ connector = connector, busy = false }, Store)
+  return setmetatable({ connector = connector, busy_guilds = {} }, Store)
 end
 
 -- The transport's transactions are connection-bound and do not support query.
@@ -14,9 +14,17 @@ end
 -- located first, then the document is read again *inside* the transaction.
 function Store:run(guild_id, fn)
   if not valid_id(guild_id) then return false, "invalid_guild" end
-  if self.busy then return false, "busy" end
-  self.busy = true
-  local c, collection = self.connector, "molly_g_" .. guild_id
+  if self.busy_guilds[guild_id] then return false, "busy" end
+  self.busy_guilds[guild_id] = true
+  local c, collection
+  local session_ok, session, session_reason = pcall(self.connector.session, self.connector)
+  if session_ok and session then
+    c = session
+  else
+    self.busy_guilds[guild_id] = nil
+    return false, session_ok and (session_reason or "capability_unavailable") or "unavailable"
+  end
+  collection = "molly_g_" .. guild_id
   local function work()
     local found, rows = c:query({ collection = collection, limit = 2 })
     local missing = not found and rows == "not_found"
@@ -54,7 +62,8 @@ function Store:run(guild_id, fn)
   end
   local ok, success, result = pcall(work)
   if c.in_transaction then pcall(c.rollback, c) end
-  self.busy = false
+  pcall(c.close, c)
+  self.busy_guilds[guild_id] = nil
   if not ok then return false, "unavailable" end
   return success, result
 end

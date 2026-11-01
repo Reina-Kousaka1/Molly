@@ -102,6 +102,24 @@ function Connector:check()
   return self:health()
 end
 
+-- A persistence operation owns an isolated connector/transport session. The
+-- transaction state is connection-bound, so sharing this connector while a
+-- request is suspended would let another request observe the wrong lifecycle.
+function Connector:session()
+  if not self.driver or type(self.driver.fork) ~= "function" then
+    return nil, "capability_unavailable"
+  end
+  local ok, driver = pcall(self.driver.fork, self.driver)
+  if not ok or not driver then return nil, "transport_unavailable" end
+  local session = Connector.new({ driver = driver, expected_api_version = self.expected_api_version })
+  local initialized = session:initialize()
+  if initialized.detail == "initialization_failed" then
+    session:close()
+    return nil, "transport_unavailable"
+  end
+  return session
+end
+
 function Connector:_request(name, payload)
   if not self.in_transaction then
     local health = self:health()
