@@ -4,6 +4,7 @@ Ledger.__index = Ledger
 local MAX = 1000000000000
 local MAX_RECORDS = 1000
 local MAX_ACCOUNTS = 200
+local MAX_HISTORY = 20
 
 local function amount(value, available)
   if value == "all" or value == "max" then value = available end
@@ -37,16 +38,28 @@ function Ledger:balance(guild, user)
   end)
 end
 
-function Ledger:history(guild, user)
+function Ledger:history(guild, user, limit)
   if not Store.valid_id(user) then return false, "invalid_user" end
+  limit = tonumber(limit) or 10
+  limit = math.max(1, math.min(MAX_HISTORY, math.floor(limit)))
   return self.store:run(guild, function(data)
     local entries = {}
     for i = #data.journal, 1, -1 do
       local entry = data.journal[i]
       if entry.user == user or entry.counterparty == user then entries[#entries + 1] = entry end
-      if #entries == 10 then break end
+      if #entries == limit then break end
     end
     return true, entries, false
+  end)
+end
+
+function Ledger:transaction(guild, transaction_id)
+  if type(transaction_id) ~= "string" or #transaction_id < 2 or #transaction_id > 32 then return false, "invalid_transaction" end
+  return self.store:run(guild, function(data)
+    for i = #data.journal, 1, -1 do
+      if data.journal[i].id == transaction_id then return true, data.journal[i], false end
+    end
+    return false, "not_found"
   end)
 end
 
