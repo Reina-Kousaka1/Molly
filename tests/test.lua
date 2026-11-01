@@ -316,7 +316,6 @@ test("smoke commands route without a Discord connection", function()
     interaction_id = "1", interaction_token = "fixture",
     bot = { application_id = "2", rest = { create_interaction_response = function(_, _, _, payload)
       ack = payload.type == 5
-      return true
     end } },
     respond = function(_, value) response = value end,
     edit = function(_, value) edited = value end,
@@ -351,6 +350,22 @@ test("deferred responses are public by default and private only when requested",
   assert(Response.defer(public) and #payloads == 2)
 end)
 
+test("bodyless successful callbacks still acknowledge interactions", function()
+  local function context()
+    return {
+      bot = { application_id = "2", rest = { create_interaction_response = function() return nil end } },
+      interaction_id = "10", interaction_token = "fixture",
+    }
+  end
+  local deferred = context()
+  assert(Response.defer(deferred))
+  assert(deferred._molly_deferred)
+
+  local acknowledged = context()
+  assert(Response.acknowledge(acknowledged))
+  assert(acknowledged._molly_deferred)
+end)
+
 test("failed defer REST results do not mark the interaction deferred", function()
   local failures_logged = {}
   local logger = { error = function(_, event, fields) failures_logged[#failures_logged + 1] = { event = event, fields = fields } end }
@@ -360,8 +375,9 @@ test("failed defer REST results do not mark the interaction deferred", function(
     defer_ok, defer_reason = Response.defer(context)
   end })
   local failures = {
-    { value = false }, { value = nil }, { value = { status = 503 } },
-    { value = { code = 500 } }, { value = { ok = false } },
+    { value = false }, { value = { status = 503 } },
+    { value = { code = 500 } }, { value = { code = 10062, message = "Unknown interaction" } },
+    { value = { ok = false } },
   }
   for index = 1, #failures do
     local result = failures[index].value
@@ -375,15 +391,20 @@ test("failed defer REST results do not mark the interaction deferred", function(
     equal(defer_reason, "request_failed")
     assert(not context._molly_deferred)
   end
-  local context = {
-    bot = { application_id = "2", rest = { create_interaction_response = function() return nil end } },
-    interaction_id = "10", interaction_token = "fixture",
+  local thrown = {
+    bot = { application_id = "2", rest = { create_interaction_response = function() error("fixture network detail") end } },
+    interaction_id = "11", interaction_token = "fixture",
+    _molly_command_name = "probe",
   }
-  assert(not Response.acknowledge(context))
-  assert(not context._molly_deferred)
-  equal(failures_logged[3].event, "discord_interaction_ack_failed")
-  equal(failures_logged[3].fields.command, "probe")
-  equal(failures_logged[3].fields.reason, "http_503")
+  assert(router:dispatch("probe", thrown))
+  assert(not defer_ok and not thrown._molly_deferred)
+  equal(defer_reason, "request_failed")
+
+  equal(failures_logged[2].event, "discord_interaction_ack_failed")
+  equal(failures_logged[2].fields.command, "probe")
+  equal(failures_logged[2].fields.reason, "http_503")
+  equal(failures_logged[4].fields.reason, "request_rejected")
+  equal(failures_logged[#failures_logged].fields.reason, "request_failed")
 end)
 
 test("safe command sync converts REST exceptions to sanitized failures", function()
@@ -479,7 +500,6 @@ test("health command defers before running checks and edits the final response",
     interaction_id = "1", interaction_token = "fixture",
     bot = { application_id = "2", rest = { create_interaction_response = function()
       order[#order + 1] = "defer"
-      return true
     end } },
     edit = function(_, text) edited = text; order[#order + 1] = "edit" end,
   }
@@ -549,7 +569,7 @@ test("Discord bootstrap forwards lifecycle, command routing, and shutdown", func
   local response
   fake_bot.registered.health.callback({
     interaction_id = "1", interaction_token = "fixture",
-    bot = { application_id = "2", rest = { create_interaction_response = function() return true end } },
+    bot = { application_id = "2", rest = { create_interaction_response = function() end } },
     edit = function(_, value, options) response = { content = value, options = options } end,
     respond = function(_, value, options) response = { content = value, options = options } end,
   })
