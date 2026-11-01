@@ -48,11 +48,17 @@ function Response.set_embed(ctx, spec)
   return true
 end
 
+-- A normal Discord interaction callback returns 204 with no body. The
+-- installed discord.lua exposes only the body, so nil is a valid success after
+-- a non-throwing call. Reject thrown failures and explicit error/status results.
 local function callback_result(call_ok, result)
-  if not call_ok or result == nil then return false, "request_failed" end
+  if not call_ok then return false, "request_failed" end
+  if result == nil then return true end
   if result == false then return false, "request_rejected" end
   if type(result) ~= "table" then return true end
-  if result.ok == false or result.success == false then return false, "request_rejected" end
+  if result.ok == false or result.success == false or result.error ~= nil then
+    return false, "request_rejected"
+  end
   for _, field in ipairs({ "status", "status_code", "http_status" }) do
     if result[field] ~= nil then
       local status = tonumber(result[field])
@@ -61,9 +67,16 @@ local function callback_result(call_ok, result)
       end
     end
   end
-  local code = tonumber(result.code)
-  if code and code >= 100 and code <= 599 and (code < 200 or code > 299) then
-    return false, "http_" .. tostring(math.floor(code))
+  if result.code ~= nil then
+    local code = tonumber(result.code)
+    if not code then return false, "invalid_status" end
+    if code < 200 or code > 299 then
+      if code >= 100 and code <= 599 then
+        return false, "http_" .. tostring(math.floor(code))
+      end
+      -- Discord API error codes (for example 10062) are not HTTP status codes.
+      return false, "request_rejected"
+    end
   end
   return true
 end
@@ -100,9 +113,8 @@ local function send_defer(ctx, options, require_application_id)
   return true
 end
 
--- discord.lua returns only the response body, while some REST adapters return
--- a status object. Accept successful bodies and 2xx status objects, but do not
--- mark a context deferred after a rejected result.
+-- Some REST adapters return status objects; validate those when present.
+-- The installed discord.lua returns only the response body (nil on HTTP 204).
 -- Deferred responses are public by default, matching ordinary Discord
 -- command responses. Pass { ephemeral = true } only for private workflows.
 function Response.defer(ctx, options)
