@@ -37,6 +37,14 @@ function Lifecycle:pending()
   end)
 end
 
+function Lifecycle:cancel(interaction_id)
+  return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
+    if data.pending and data.pending.interaction_id == interaction_id then data.pending = false end
+    data.receipts[interaction_id] = nil
+    return true, true, true
+  end)
+end
+
 function Lifecycle:complete(interaction_id)
   return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
     if not data.pending or data.pending.interaction_id ~= interaction_id then return false, "marker_mismatch" end
