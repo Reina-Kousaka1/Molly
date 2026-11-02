@@ -19,7 +19,8 @@ end
 
 function Prefix.new(economy, options)
   options = options or {}
-  assert(type(economy) == "table" and type(economy.definition) == "function" and type(economy.execute) == "function",
+  assert(type(economy) == "table" and type(economy.definition) == "function"
+    and type(economy.authorize) == "function" and type(economy.execute) == "function",
     "economy prefix handlers are required")
   local prefix = options.prefix or "."
   assert(type(prefix) == "string" and #prefix == 1, "prefix must be one character")
@@ -79,6 +80,13 @@ function Prefix:dispatch(message)
     request_type = "message",
     get_arg = function(_, name) return parsed[name] end,
   }
+  local authorized, reason = self.economy:authorize(command, context)
+  if not authorized then
+    local text = reason == "blacklisted" and "You are globally blacklisted from using Molly."
+      or "Molly could not verify command access right now. Please try again later."
+    self:_reply(message, text, command)
+    return false, reason
+  end
   local success, response = self.economy:execute(command, context)
   if type(response) ~= "string" then response = "Molly could not complete the request." end
   local replied = self:_reply(message, response, command)

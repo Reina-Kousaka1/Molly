@@ -36,7 +36,7 @@ function Economy.register(router, ledger, options)
       end
       finish(ctx, type(text) == "string" and text or "Molly could not complete the request.")
     end })
-    prefix_commands[name] = { handler = handler, arguments = prefix_arguments or {} }
+    prefix_commands[name] = { handler = handler, arguments = prefix_arguments or {}, slash_name = name }
   end
   local function failed(reason) return messages[reason] or "Molly could not complete the request." end
   local function balance(ctx, guild, user)
@@ -119,6 +119,11 @@ function Economy.register(router, ledger, options)
   prefix_commands.money = prefix_commands.balance
   local prefix_api = {}
   function prefix_api:definition(name) return prefix_commands[name] end
+  function prefix_api:authorize(name, ctx)
+    local definition = prefix_commands[name]
+    if not definition then return false, "unknown_command" end
+    return router:authorize(definition.slash_name, ctx)
+  end
   function prefix_api:execute(name, ctx)
     local definition = prefix_commands[name]
     if not definition then return false, "unknown_command" end

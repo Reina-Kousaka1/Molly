@@ -4,6 +4,7 @@ Ledger.__index = Ledger
 local MAX = 1000000000000
 local MAX_RECORDS = 1000
 local MAX_ACCOUNTS = 200
+local MAX_HISTORY = 20
 local BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 local function base36(decimal)
@@ -73,14 +74,16 @@ function Ledger:balance(guild, user)
   end)
 end
 
-function Ledger:history(guild, user)
+function Ledger:history(guild, user, limit)
   if not Store.valid_id(user) then return false, "invalid_user" end
+  limit = tonumber(limit) or 10
+  limit = math.max(1, math.min(MAX_HISTORY, math.floor(limit)))
   return self.store:run(guild, function(data)
     local entries = {}
     for i = #data.journal, 1, -1 do
       local entry = data.journal[i]
       if entry.user == user or entry.counterparty == user then entries[#entries + 1] = public_record(entry) end
-      if #entries == 10 then break end
+      if #entries == limit then break end
     end
     return true, entries, false
   end)
@@ -89,7 +92,7 @@ end
 -- The persisted E-prefixed journal ID remains canonical. A deterministic base-36
 -- alias is exposed as the shorter Money ID; legacy journal rows need no migration.
 function Ledger:transaction(guild, id)
-  if type(id) ~= "string" or #id < 2 or #id > 21 then
+  if type(id) ~= "string" or #id < 2 or #id > 32 then
     return false, "invalid_transaction"
   end
   local lookup = id

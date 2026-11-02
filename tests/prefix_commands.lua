@@ -148,6 +148,22 @@ test("bot messages, DMs, unknown commands, malformed arguments, and admin-only c
   assert(not env.store.data["10"] or #env.store.data["10"].journal == 0)
 end)
 
+test("prefix uses the same global access gate as slash commands", function()
+  local env = environment()
+  local checked = {}
+  env.router:set_gate(function(_, definition)
+    checked[#checked + 1] = definition.name
+    return false, "blacklisted"
+  end)
+  local msg = message("1450", "10", "20", ".daily")
+  local ok, reason = env.prefix:dispatch(msg)
+  assert(not ok and reason == "blacklisted")
+  assert(msg.replies[1] == "You are globally blacklisted from using Molly.")
+  assert(not env.store.data["10"] or #env.store.data["10"].journal == 0)
+  local money = message("1451", "10", "20", ".money")
+  assert(not env.prefix:dispatch(money) and checked[2] == "balance")
+end)
+
 test("only existing economy commands and the requested money alias have prefix definitions", function()
   local env = environment()
   for _, name in ipairs({ "money", "balance", "bank", "daily", "weekly", "work", "deposit", "withdraw", "pay", "transactions", "leaderboard" }) do
