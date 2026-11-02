@@ -75,7 +75,13 @@ function Bootstrap:build()
       context.app_permissions = interaction.app_permissions
       context.resolved = interaction.data and interaction.data.resolved or {}
       local first = interaction.data and interaction.data.options and interaction.data.options[1]
-      if first and first.type == 1 then context.molly_subcommand = first.name end
+      if first and first.type == 1 then
+        context.molly_subcommand = first.name
+      elseif first and first.type == 2 then
+        context.molly_subcommand = first.name
+        local nested = first.options and first.options[1]
+        if nested and nested.type == 1 then context.molly_subcommand_action = nested.name end
+      end
       return context
     end
   end
@@ -110,7 +116,7 @@ function Bootstrap:build()
     end)
   end
 
-  for _, definition in ipairs(self.commands:list()) do
+  for _, definition in ipairs(self.commands:list("slash")) do
     self.bot:slash_command(definition.name, {
       description = definition.description,
       options = definition.options,

@@ -17,14 +17,15 @@ local function user_argument(value)
   return { id = id }
 end
 
-function Prefix.new(economy, options)
+function Prefix.new(router, settings, options)
   options = options or {}
-  assert(type(economy) == "table" and type(economy.definition) == "function"
-    and type(economy.authorize) == "function" and type(economy.execute) == "function",
-    "economy prefix handlers are required")
+  assert(type(router) == "table" and type(router.prefix_definition) == "function"
+    and type(router.dispatch_prefix) == "function", "command router is required")
+  assert(type(settings) == "table" and type(settings.get) == "function", "guild settings are required")
   local prefix = options.prefix or "."
-  assert(type(prefix) == "string" and #prefix == 1, "prefix must be one character")
-  return setmetatable({ economy = economy, prefix = prefix, logger = options.logger }, Prefix)
+  return setmetatable({ router = router, settings = settings, default_prefix = prefix,
+    logger = options.logger, clock = options.clock or os.time, cache_ttl = options.cache_ttl or 30,
+    prefixes = {} }, Prefix)
 end
 
 function Prefix:_reply(message, text, command)
@@ -35,38 +36,64 @@ function Prefix:_reply(message, text, command)
   return ok
 end
 
+function Prefix:set_prefix(guild, prefix)
+  if not Store.valid_id(guild) or type(prefix) ~= "string" then return false end
+  self.prefixes[guild] = { value = prefix, expires = self.clock() + self.cache_ttl }
+  return true
+end
+
+function Prefix:invalidate(guild)
+  self.prefixes[guild] = nil
+end
+
+function Prefix:_prefix_for(guild)
+  local now = self.clock()
+  local cached = self.prefixes[guild]
+  if cached and cached.expires >= now then return cached.value end
+  local ok, value = self.settings:get(guild)
+  if not ok or type(value) ~= "table" or type(value.prefix) ~= "string" then
+    if self.logger then self.logger:warn("prefix_settings_unavailable", { detail = "guild_settings_unavailable" }) end
+    self.prefixes[guild] = nil
+    return nil
+  end
+  local prefix = value.prefix or self.default_prefix
+  self.prefixes[guild] = { value = prefix, expires = now + self.cache_ttl }
+  return prefix
+end
+
 function Prefix:dispatch(message)
   if type(message) ~= "table" or type(message.author) ~= "table" or message.author.bot or message.webhook_id then
     return false, "ignored_message"
   end
   if not Store.valid_id(message.guild_id) then return false, "not_a_guild_message" end
   if not Store.valid_id(message.author.id) or not Store.valid_id(message.id) then return false, "invalid_message" end
-  if type(message.content) ~= "string" or message.content:sub(1, #self.prefix) ~= self.prefix then
-    return false, "not_a_prefix_command"
-  end
+  if type(message.content) ~= "string" then return false, "not_a_prefix_command" end
 
-  local body = message.content:sub(#self.prefix + 1)
+  local prefix = self:_prefix_for(message.guild_id)
+  if not prefix or message.content:sub(1, #prefix) ~= prefix then return false, "not_a_prefix_command" end
+  local body = message.content:sub(#prefix + 1)
   local command, raw_arguments = body:match("^([%w_%-]+)%s*(.*)$")
   if not command then return false, "malformed_prefix_command" end
   command = command:lower()
-  local definition = self.economy:definition(command)
+  local definition = self.router:prefix_definition(command)
   if not definition then return false, "unknown_command" end
 
+  local argument_names = definition.prefix.arguments or {}
   local arguments = words(raw_arguments or "")
-  if #arguments ~= #definition.arguments then
-    local usage = self.prefix .. command
-    for _, name in ipairs(definition.arguments) do usage = usage .. " " .. (usage_argument[name] or ("<" .. name .. ">")) end
+  if #arguments ~= #argument_names then
+    local usage = prefix .. command
+    for _, name in ipairs(argument_names) do usage = usage .. " " .. (usage_argument[name] or ("<" .. name .. ">")) end
     self:_reply(message, "Usage: " .. usage, command)
     return false, "invalid_arguments"
   end
 
   local parsed = {}
-  for index, name in ipairs(definition.arguments) do
+  for index, name in ipairs(argument_names) do
     local value = arguments[index]
     if name == "user" then
       value = user_argument(value)
       if not value then
-        self:_reply(message, "Mention a valid server user. Usage: " .. self.prefix .. "pay <@user> <amount>", command)
+        self:_reply(message, "Mention a valid server user. Usage: " .. prefix .. "pay <@user> <amount>", command)
         return false, "invalid_user_argument"
       end
     end
@@ -74,24 +101,22 @@ function Prefix:dispatch(message)
   end
 
   local context = {
-    guild = { id = message.guild_id },
-    author = { id = message.author.id },
-    request_id = message.id,
-    request_type = "message",
+    source = "message", transport = "message", message = message, guild = { id = message.guild_id },
+    author = { id = message.author.id }, member = message.member,
+    channel = message.channel or { id = message.channel_id, name = message.channel_name, type = message.channel_type },
+    channel_id = message.channel_id, request_id = message.id, request_type = "message", command_prefix = prefix,
     get_arg = function(_, name) return parsed[name] end,
   }
-  local authorized, reason = self.economy:authorize(command, context)
-  if not authorized then
-    local text = reason == "blacklisted" and "You are globally blacklisted from using Molly."
-      or "Molly could not verify command access right now. Please try again later."
-    self:_reply(message, text, command)
-    return false, reason
+  local response_ok = true
+  context.respond = function(_, text)
+    response_ok = self:_reply(message, type(text) == "string" and text or "Molly could not complete the request.", command)
+    return response_ok
   end
-  local success, response = self.economy:execute(command, context)
-  if type(response) ~= "string" then response = "Molly could not complete the request." end
-  local replied = self:_reply(message, response, command)
-  if not replied then return false, "reply_failed" end
-  return success, response
+  context.edit = context.respond
+
+  local handled, reason = self.router:dispatch_prefix(command, context)
+  if not response_ok then return false, "reply_failed" end
+  return handled, reason
 end
 
 function Prefix:register(bot)

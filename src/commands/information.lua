@@ -12,16 +12,17 @@ local function respond(ctx, text) ctx:respond(text) end
 local function user_option() return { name = "user", description = "The user to inspect", type = 6, required = false } end
 
 function Information.register(router, app)
-  local function register(name, description, execute, options, category)
-    router:register({ name = name, description = description, execute = execute, options = options, category = category or "Information" })
+  local function register(name, description, execute, options, category, prefix)
+    router:register({ name = name, description = description, execute = execute, options = options,
+      category = category or "Information", prefix = prefix and { arguments = {} } or nil })
   end
   register("uptime", "Show how long Molly has been running", function(ctx)
     local seconds = math.max(0, os.time() - (app.started_at or os.time()))
     respond(ctx, string.format("Uptime: %dd %dh %dm", math.floor(seconds / 86400), math.floor(seconds / 3600) % 24, math.floor(seconds / 60) % 60))
-  end, nil, "Utility")
+  end, nil, "Utility", true)
   register("botinfo", "Show Molly information", function(ctx)
     respond(ctx, "Molly · Discord management bot\n" .. app:health_message())
-  end)
+  end, nil, "Information", true)
   register("serverinfo", "Show information about this server", function(ctx)
     if not Store.valid_id(guild(ctx)) then respond(ctx, "This command requires a server."); return end
     if not Response.defer(ctx) then return end
@@ -53,7 +54,7 @@ function Information.register(router, app)
   register("channelinfo", "Show information about this channel", function(ctx)
     local channel = ctx.channel or {}
     respond(ctx, "Channel: " .. safe(channel.name) .. "\nID: " .. safe(channel.id) .. "\nType: " .. safe(channel.type))
-  end)
+  end, nil, "Information", true)
   register("roleinfo", "Show an available role", function(ctx)
     local role = arg(ctx, "role") or {}
     respond(ctx, "Role: " .. safe(role.name) .. "\nID: " .. safe(role.id))
@@ -78,11 +79,13 @@ function Information.register(router, app)
   end)
   register("help", "List available Molly commands", function(ctx)
     local groups, order = {}, { "Moderation", "Staff / HR", "Economy", "Bank", "Information", "Utility", "Music", "Administration" }
-    for _, definition in ipairs(router:list()) do
+    local surface = ctx.source == "message" and "prefix" or "slash"
+    for _, definition in ipairs(router:list(surface)) do
       local category = definition.category or "Utility"
       if not definition.permission or Permissions.has(ctx.member and ctx.member.permissions, definition.permission) then
         groups[category] = groups[category] or {}
-        groups[category][#groups[category] + 1] = "/" .. definition.name
+        local prefix = ctx.command_prefix or "."
+        groups[category][#groups[category] + 1] = (surface == "prefix" and prefix or "/") .. definition.name
       end
     end
     local lines = {}
@@ -90,7 +93,7 @@ function Information.register(router, app)
       if groups[category] then lines[#lines + 1] = category .. ": " .. table.concat(groups[category], ", ") end
     end
     respond(ctx, table.concat(lines, "\n"))
-  end, nil, "Utility")
+  end, nil, "Utility", true)
 end
 
 return Information

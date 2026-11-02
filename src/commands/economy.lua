@@ -1,6 +1,7 @@
 local Economy = {}
 local Response = require("src.discord.response")
 local Permissions = require("src.discord.permissions")
+local Money = require("src.economy.money_format")
 local messages = { invalid_user = "A valid server user is required.", invalid_target = "Choose another valid user.",
   invalid_amount = "Enter a positive whole amount, all, or max.", insufficient = "Insufficient funds.",
   overflow = "That amount would exceed the balance limit.", cooldown = "That reward is not available yet.",
@@ -17,11 +18,25 @@ end
 function Economy.register(router, ledger, options)
   options = options or {}
   local logger = options.logger
-  local prefix_commands = {}
   local function add(name, category, description, handler, options, prefix_arguments)
-    router:register({ name = name, category = category, description = description, options = options, execute = function(ctx)
+    local prefix = nil
+    if prefix_arguments then
+      if prefix_arguments.arguments then prefix = prefix_arguments
+      else prefix = { arguments = prefix_arguments } end
+    end
+    local definition = { name = name, category = category, description = description, options = options,
+      prefix = prefix, execute = function(ctx)
       if not ctx.guild or not ctx.author or not ctx.author.id then
         ctx:respond("This command requires a server member.", { ephemeral = true }); return
+      end
+      if ctx.source == "message" then
+        local ok, text = pcall(handler, ctx, ctx.guild.id, ctx.author.id)
+        if not ok then
+          if logger then logger:error("economy_operation_failed", { command = name, stage = "handler" }) end
+          text = "Molly could not complete the request."
+        end
+        ctx:respond(type(text) == "string" and text or "Molly could not complete the request.")
+        return
       end
       local acknowledged, ack_error = Response.defer(ctx)
       if not acknowledged then
@@ -35,16 +50,18 @@ function Economy.register(router, ledger, options)
         text = "Molly could not complete the request."
       end
       finish(ctx, type(text) == "string" and text or "Molly could not complete the request.")
-    end })
-    prefix_commands[name] = { handler = handler, arguments = prefix_arguments or {}, slash_name = name }
+    end }
+    router:register(definition)
   end
   local function failed(reason) return messages[reason] or "Molly could not complete the request." end
+  local function money(guild) return Money.formatter(options.settings, guild) end
   local function balance(ctx, guild, user)
     local ok, result = ledger:balance(guild, user)
     if not ok then return failed(result) end
-    return string.format("Wallet: %.0f coins\nBank: %.0f coins\nTotal: %.0f coins", result.wallet, result.bank, result.wallet + result.bank)
+    local format = money(guild)
+    return string.format("Wallet: %s\nBank: %s\nTotal: %s", format(result.wallet), format(result.bank), format(result.wallet + result.bank))
   end
-  add("balance", "Economy", "Show your wallet and bank balances", balance, nil, {})
+  add("balance", "Economy", "Show your wallet and bank balances", balance, nil, { arguments = {}, aliases = { "money" } })
   add("bank", "Bank", "Show your bank and wallet balances", balance, nil, {})
   local amount_option = { name = "amount", description = "Positive whole coins, all, or max", type = 3, required = true, max_length = 13 }
   local function change(kind)
@@ -56,7 +73,8 @@ function Economy.register(router, ledger, options)
         if logger and messages[result] then logger:warn("economy_operation_rejected", { command = kind, reason = result }) end
         return failed(result)
       end
-      return string.format("%s: %.0f coins. Wallet: %.0f; bank: %.0f.", kind, result.amount, result.wallet, result.bank)
+      local format = money(guild)
+      return string.format("%s: %s. Wallet: %s; bank: %s.", kind, format(result.amount), format(result.wallet), format(result.bank))
     end
   end
   add("deposit", "Bank", "Move coins from wallet to bank", change("deposit"), { amount_option }, { "amount" })
@@ -88,7 +106,7 @@ function Economy.register(router, ledger, options)
       if entry.user then lines[#lines + 1] = "User ID: " .. safe(entry.user) end
       if entry.guild then lines[#lines + 1] = "Guild ID: " .. safe(entry.guild) end
       if entry.kind then lines[#lines + 1] = "Type: " .. safe(entry.kind) end
-      if type(entry.amount) == "number" then lines[#lines + 1] = string.format("Amount: %.0f coins", entry.amount) end
+      if type(entry.amount) == "number" then lines[#lines + 1] = "Amount: " .. money(ctx.guild.id)(entry.amount) end
       if entry.counterparty and entry.counterparty ~= "" then lines[#lines + 1] = "Counterparty: " .. safe(entry.counterparty) end
       if type(entry.timestamp) == "number" then
         local valid_time, timestamp = pcall(os.date, "!%Y-%m-%d %H:%M UTC", entry.timestamp)
@@ -101,8 +119,9 @@ function Economy.register(router, ledger, options)
     local ok, entries = ledger:history(guild, user)
     if not ok then return failed(entries) end
     local lines = {}
+    local format = money(guild)
     for _, entry in ipairs(entries) do
-      lines[#lines + 1] = string.format("%s · %s · %.0f coins · %s UTC", entry.money_id or entry.id, entry.kind, entry.amount, os.date("!%Y-%m-%d %H:%M", entry.timestamp))
+      lines[#lines + 1] = string.format("%s · %s · %s · %s UTC", entry.money_id or entry.id, entry.kind, format(entry.amount), os.date("!%Y-%m-%d %H:%M", entry.timestamp))
     end
     return #lines > 0 and table.concat(lines, "\n") or "No economy transactions yet."
   end, nil, {})
@@ -110,32 +129,11 @@ function Economy.register(router, ledger, options)
     local ok, entries = ledger:leaderboard(guild)
     if not ok then return failed(entries) end
     local lines = {}
-    for index, entry in ipairs(entries) do lines[#lines + 1] = string.format("%d. User %s: %.0f coins", index, entry.user, entry.total) end
+    local format = money(guild)
+    for index, entry in ipairs(entries) do lines[#lines + 1] = string.format("%d. User %s: %s", index, entry.user, format(entry.total)) end
     return #lines > 0 and table.concat(lines, "\n") or "No balances yet."
   end, nil, {})
 
-  -- The prefix surface calls these exact handlers; aliases share the same
-  -- definition object and never get a parallel set of economy rules.
-  prefix_commands.money = prefix_commands.balance
-  local prefix_api = {}
-  function prefix_api:definition(name) return prefix_commands[name] end
-  function prefix_api:authorize(name, ctx)
-    local definition = prefix_commands[name]
-    if not definition then return false, "unknown_command" end
-    return router:authorize(definition.slash_name, ctx)
-  end
-  function prefix_api:execute(name, ctx)
-    local definition = prefix_commands[name]
-    if not definition then return false, "unknown_command" end
-    local ok, result = pcall(definition.handler, ctx, ctx.guild.id, ctx.author.id)
-    if not ok then
-      if logger then logger:error("economy_operation_failed", { command = name, stage = "prefix_handler" }) end
-      return false, "Molly could not complete the request."
-    end
-    if type(result) ~= "string" then return false, "Molly could not complete the request." end
-    return true, result
-  end
-  return prefix_api
 end
 
 return Economy

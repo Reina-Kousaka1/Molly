@@ -35,6 +35,7 @@ function Smoke.register(router, app, options)
   router:register({
     name = "about",
     description = "Shows Molly bootstrap information",
+    prefix = { arguments = {} },
     execute = function(context)
       context:respond(Personality.about())
     end,
