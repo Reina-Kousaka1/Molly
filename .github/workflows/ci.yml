@@ -28,5 +28,11 @@ jobs:
       - name: Run tests
         run: lua5.1 tests/test.lua
 
+      - name: Run economy command and ledger tests
+        run: lua5.1 tests/economy_commands.lua
+
+      - name: Run money responder tests
+        run: lua5.1 tests/money_responder.lua
+
       - name: Check whitespace
         run: git diff --check

@@ -17,6 +17,7 @@ function Bootstrap.new(options)
 
   return setmetatable({
     discord = options.discord,
+    intents = options.intents,
     app = options.app,
     commands = options.commands,
     logger = options.logger,
@@ -29,7 +30,7 @@ function Bootstrap.new(options)
 end
 
 function Bootstrap:build()
-  self.bot = self.discord.Bot()
+  self.bot = self.discord.Bot(self.intents)
   if type(self.on_client) == "function" and type(self.bot.connect) == "function" then
     local connect = self.bot.connect
     self.bot.connect = function(bot, ...)

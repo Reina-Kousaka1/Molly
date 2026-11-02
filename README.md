@@ -23,6 +23,8 @@ The economy layer provides persistent guild/user state and transaction-oriented 
 
 The implementation is designed to preserve request correlation and avoid reporting successful writes when persistence fails.
 
+Economy receipts keep their original `E<interaction-id>` journal key for idempotency and backward compatibility. Molly derives a shorter base-36 `M...` Money ID for `/transactions`; users with Manage Server can look up a record ephemerally with `/transaction id:<money-id>`. Existing `E...` IDs remain accepted by the lookup.
+
 ### Staff management
 
 Molly includes a staff directory and staff-management domain alongside moderation and economy. Staff state is persisted per guild through the same storage boundary.
@@ -40,6 +42,8 @@ Molly uses a centralized interaction/response layer for command acknowledgements
 ### Presence and personality
 
 Molly has her own presence/personality layer rather than borrowing status text from other bots. Seasonal presentation may change independently of the underlying moderation, economy, staff, and music behavior.
+
+Molly also has a small guild-message responder for the exact word `money` (case-insensitive, including trailing `.`, `!`, or `?`). Reading guild message text requires the privileged **Message Content** Gateway Intent to be enabled in the Discord Developer Portal as well as requested by Molly.
 
 ## Architecture
 

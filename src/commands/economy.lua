@@ -1,5 +1,6 @@
 local Economy = {}
 local Response = require("src.discord.response")
+local Permissions = require("src.discord.permissions")
 local messages = { invalid_user = "A valid server user is required.", invalid_target = "Choose another valid user.",
   invalid_amount = "Enter a positive whole amount, all, or max.", insufficient = "Insufficient funds.",
   overflow = "That amount would exceed the balance limit.", cooldown = "That reward is not available yet.",
@@ -9,6 +10,9 @@ local messages = { invalid_user = "A valid server user is required.", invalid_ta
 
 local function finish(ctx, text) ctx:edit(text) end
 local function arg(ctx, key) return ctx:get_arg(key) end
+local function safe(value)
+  return tostring(value or ""):gsub("@", "@\226\128\139"):gsub("[\r\n]", " "):sub(1, 120)
+end
 
 function Economy.register(router, ledger, options)
   options = options or {}
@@ -49,7 +53,7 @@ function Economy.register(router, ledger, options)
         if logger and messages[result] then logger:warn("economy_operation_rejected", { command = kind, reason = result }) end
         return failed(result)
       end
-      return string.format("%s: %.0f coins. Wallet: %.0f; bank: %.0f. Reference: %s", kind, result.amount, result.wallet, result.bank, result.id)
+      return string.format("%s: %.0f coins. Wallet: %.0f; bank: %.0f.", kind, result.amount, result.wallet, result.bank)
     end
   end
   add("deposit", "Bank", "Move coins from wallet to bank", change("deposit"), { amount_option })
@@ -60,12 +64,42 @@ function Economy.register(router, ledger, options)
   for _, kind in ipairs({ "daily", "weekly", "work" }) do
     add(kind, "Economy", "Claim your " .. kind .. " reward", change(kind))
   end
+  router:register({ name = "transaction", category = "Economy", description = "Look up a money transaction by ID",
+    default_member_permissions = Permissions.flags.manage_guild,
+    options = { { name = "id", description = "Money ID, for example Mbwi530hzprtq", type = 3, required = true, max_length = 21 } },
+    execute = function(ctx)
+      if not ctx.guild or not ctx.author or not Permissions.has(ctx.member and ctx.member.permissions, "manage_guild") then
+        ctx:respond("You do not have permission to look up economy transactions.", { ephemeral = true }); return
+      end
+      if not Response.defer(ctx, { ephemeral = true }) then return end
+      local id = arg(ctx, "id")
+      local ok, entry = ledger:transaction(ctx.guild.id, id)
+      if not ok then
+        local text = entry == "invalid_transaction" and "Enter a Money ID such as Mabc123."
+          or entry == "transaction_not_found" and "No matching transaction was found in this server."
+          or failed(entry)
+        finish(ctx, text)
+        return
+      end
+      local lines = { "Money ID: " .. safe(entry.money_id or entry.id) }
+      if entry.user then lines[#lines + 1] = "User ID: " .. safe(entry.user) end
+      if entry.guild then lines[#lines + 1] = "Guild ID: " .. safe(entry.guild) end
+      if entry.kind then lines[#lines + 1] = "Type: " .. safe(entry.kind) end
+      if type(entry.amount) == "number" then lines[#lines + 1] = string.format("Amount: %.0f coins", entry.amount) end
+      if entry.counterparty and entry.counterparty ~= "" then lines[#lines + 1] = "Counterparty: " .. safe(entry.counterparty) end
+      if type(entry.timestamp) == "number" then
+        local valid_time, timestamp = pcall(os.date, "!%Y-%m-%d %H:%M UTC", entry.timestamp)
+        if valid_time and timestamp then lines[#lines + 1] = "Timestamp: " .. timestamp end
+      end
+      if entry.status then lines[#lines + 1] = "Status: " .. safe(entry.status) end
+      finish(ctx, table.concat(lines, "\n"))
+    end })
   add("transactions", "Economy", "Show your latest economy transactions", function(_, guild, user)
     local ok, entries = ledger:history(guild, user)
     if not ok then return failed(entries) end
     local lines = {}
     for _, entry in ipairs(entries) do
-      lines[#lines + 1] = string.format("%s · %s · %.0f coins · %s UTC", entry.id, entry.kind, entry.amount, os.date("!%Y-%m-%d %H:%M", entry.timestamp))
+      lines[#lines + 1] = string.format("%s · %s · %.0f coins · %s UTC", entry.money_id or entry.id, entry.kind, entry.amount, os.date("!%Y-%m-%d %H:%M", entry.timestamp))
     end
     return #lines > 0 and table.concat(lines, "\n") or "No economy transactions yet."
   end)

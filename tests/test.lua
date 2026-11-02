@@ -558,16 +558,18 @@ test("Discord bootstrap forwards lifecycle, command routing, and shutdown", func
   function fake_bot:slash_command(name, definition) self.registered[name] = definition end
   function fake_bot:run(token) self.started_with = token end
   function fake_bot:stop() self.stopped = true end
-  local fake_discord = { Bot = function() return fake_bot end }
+  local fake_discord = { Bot = function(intents) fake_bot.intents = intents; return fake_bot end }
   local app = App.new({ logger = logger, seaworld = sea_world })
   local commands = CommandRouter.new(logger)
   SmokeCommands.register(commands, app)
   local bootstrap = DiscordBootstrap.new({
     discord = fake_discord,
+    intents = 54321,
     app = app,
     commands = commands,
     logger = logger,
   }):build()
+  equal(fake_bot.intents, 54321)
   local started, start_error = pcall(function() bootstrap:start("") end)
   assert(not started)
   assert(start_error:find("discord token is required", 1, true))

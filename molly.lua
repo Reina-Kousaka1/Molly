@@ -22,6 +22,7 @@ local MusicManager = require("src.music.manager")
 local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
+local MoneyResponder = require("src.responders.money")
 local timer = require("timer")
 local uv = require("uv")
 local DiscordBootstrap = require("src.discord.bootstrap")
@@ -46,6 +47,11 @@ end
 local loaded, discord = pcall(require, "discord.lua")
 if not loaded then
   logger:error("discord_library_unavailable", { dependency = "discord.lua" })
+  os.exit(1)
+end
+local gateway_intents, intents_reason = MoneyResponder.gateway_intents(discord)
+if not gateway_intents then
+  logger:error("discord_gateway_intents_unavailable", { detail = intents_reason or "configuration_failed" })
   os.exit(1)
 end
 
@@ -112,12 +118,18 @@ local presence = Presence.new({
 })
 bootstrap = DiscordBootstrap.new({
   discord = discord,
+  intents = gateway_intents,
   app = app,
   commands = commands,
   logger = logger,
   presence = presence,
   on_client = bind_client_events,
 }):build()
+
+local money_responder_registered, money_responder_reason = MoneyResponder.register(bootstrap.bot, logger)
+if not money_responder_registered then
+  logger:warn("money_responder_unavailable", { detail = money_responder_reason or "event_unavailable" })
+end
 
 bootstrap.bot:on("voice_state_update", function(data) dynamic_voice:on_voice_state(data); music_manager:on_voice_state(data) end)
 bootstrap.bot:on("voice_server_update", function(data) music_manager:on_voice_server(data) end)
