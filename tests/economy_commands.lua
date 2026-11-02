@@ -124,7 +124,9 @@ test("transaction lookup is an ephemeral Manage Server command with journal fiel
     interaction_id = "400", interaction_token = "fixture", bot = { application_id = "500", rest = {
       create_interaction_response = function(_, _, _, payload) acknowledged = payload; return true end,
     } }, get_arg = function(_, name) return name == "id" and "Mxyz" or nil end,
-    respond = function() error("must defer") end, edit = function(_, text) edited = text end }
+    respond = function() error("must defer") end, edit = function(_, text, options)
+      edited = text or options.embeds[1].description
+    end }
   Response.decorate(context)
   assert(router:dispatch("transaction", context))
   assert(acknowledged.type == 5 and acknowledged.data.flags == 64)
@@ -148,7 +150,9 @@ test("transaction lookup rejects members without Manage Server and handles unkno
   local allowed = { guild = { id = "100" }, author = { id = "200" }, member = { permissions = "32" },
     interaction_id = "400", interaction_token = "fixture", bot = { application_id = "500", rest = {
       create_interaction_response = function(_, _, _, payload) acknowledged = payload; return true end,
-    } }, get_arg = function() return "E999" end, edit = function(_, text) edited = text end }
+    } }, get_arg = function() return "E999" end, edit = function(_, text, options)
+      edited = text or options.embeds[1].description
+    end }
   Response.decorate(allowed)
   assert(router:dispatch("transaction", allowed))
   assert(acknowledged.data.flags == 64 and edited == "No matching transaction was found in this server.")
