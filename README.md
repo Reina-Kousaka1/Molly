@@ -23,7 +23,7 @@ The economy layer provides persistent guild/user state and transaction-oriented 
 
 The implementation is designed to preserve request correlation and avoid reporting successful writes when persistence fails.
 
-Economy receipts keep their original `E<interaction-id>` journal key for idempotency and backward compatibility. Molly derives a shorter base-36 `M...` Money ID for `/transactions`; users with Manage Server can look up a record ephemerally with `/transaction id:<money-id>`. Existing `E...` IDs remain accepted by the lookup.
+Economy receipts keep their original `E<interaction-id>` journal key for slash-command idempotency and backward compatibility. Prefix requests use `message:<message-id>` receipt keys and `EP<message-id>` journal IDs, so they cannot collide with interaction receipts. Molly derives shorter base-36 Money IDs (`M...` for interactions and `Mp-...` for messages); `/transactions` shows them, `/transaction id:<id>` looks them up within the current server, and existing `E...` IDs remain accepted.
 
 ### Staff management
 
@@ -43,7 +43,7 @@ Molly uses a centralized interaction/response layer for command acknowledgements
 
 Molly has her own presence/personality layer rather than borrowing status text from other bots. Seasonal presentation may change independently of the underlying moderation, economy, staff, and music behavior.
 
-Molly also has a small guild-message responder for the exact word `money` (case-insensitive, including trailing `.`, `!`, or `?`). Reading guild message text requires the privileged **Message Content** Gateway Intent to be enabled in the Discord Developer Portal as well as requested by Molly.
+Molly supports the guild-only prefix `.` for the existing economy commands, including `.money` (an alias for the existing balance handler), `.daily`, `.weekly`, `.work`, `.pay`, `.deposit`, and `.withdraw`. Prefix and slash commands share the same economy handlers and ledger. Prefix handling requires Discord's privileged **Message Content** Gateway Intent to be enabled in the Developer Portal as well as requested by Molly; this repository change does not enable it in the Portal.
 
 ## Architecture
 

@@ -22,7 +22,7 @@ local MusicManager = require("src.music.manager")
 local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
-local MoneyResponder = require("src.responders.money")
+local PrefixCommands = require("src.commands.prefix")
 local timer = require("timer")
 local uv = require("uv")
 local DiscordBootstrap = require("src.discord.bootstrap")
@@ -49,11 +49,7 @@ if not loaded then
   logger:error("discord_library_unavailable", { dependency = "discord.lua" })
   os.exit(1)
 end
-local gateway_intents, intents_reason = MoneyResponder.gateway_intents(discord)
-if not gateway_intents then
-  logger:error("discord_gateway_intents_unavailable", { detail = intents_reason or "configuration_failed" })
-  os.exit(1)
-end
+local gateway_intents = discord.enums.combine_intents(discord.enums.default_intents(), discord.enums.INTENTS.MESSAGE_CONTENT)
 
 local driver_loaded, SeaWorldDriver = pcall(require, "src.seaworld.socket_driver")
 if not driver_loaded then
@@ -84,7 +80,7 @@ local commands = CommandRouter.new(logger)
 SmokeCommands.register(commands, app, { clock = function() return uv.now() end })
 InformationCommands.register(commands, app)
 local store = GuildStore.new(sea_world)
-EconomyCommands.register(commands, Ledger.new(store), { logger = logger })
+local economy = EconomyCommands.register(commands, Ledger.new(store), { logger = logger })
 ModerationCommands.register(commands, Cases.new(store))
 StaffCommands.register(commands, StaffDirectory.new(store))
 local music_panel = MusicPanel.new(store)
@@ -126,9 +122,10 @@ bootstrap = DiscordBootstrap.new({
   on_client = bind_client_events,
 }):build()
 
-local money_responder_registered, money_responder_reason = MoneyResponder.register(bootstrap.bot, logger)
-if not money_responder_registered then
-  logger:warn("money_responder_unavailable", { detail = money_responder_reason or "event_unavailable" })
+local prefix_commands = PrefixCommands.new(economy, { logger = logger, prefix = "." })
+local prefix_registered, prefix_reason = prefix_commands:register(bootstrap.bot)
+if not prefix_registered then
+  logger:warn("prefix_commands_unavailable", { detail = prefix_reason or "event_unavailable" })
 end
 
 bootstrap.bot:on("voice_state_update", function(data) dynamic_voice:on_voice_state(data); music_manager:on_voice_state(data) end)

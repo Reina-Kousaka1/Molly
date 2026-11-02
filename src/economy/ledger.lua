@@ -26,8 +26,12 @@ local function base36(decimal)
 end
 
 local function money_id(internal_id)
-  if type(internal_id) ~= "string" or not internal_id:match("^E%d+$") then return nil end
-  return "M" .. base36(internal_id:sub(2))
+  if type(internal_id) ~= "string" then return nil end
+  local interaction_id = internal_id:match("^E(%d+)$")
+  if interaction_id then return "M" .. base36(interaction_id) end
+  local message_id = internal_id:match("^EP(%d+)$")
+  if message_id then return "Mp-" .. base36(message_id) end
+  return nil
 end
 
 local function public_record(entry)
@@ -88,9 +92,17 @@ function Ledger:transaction(guild, id)
   if type(id) ~= "string" or #id < 2 or #id > 21 then
     return false, "invalid_transaction"
   end
-  local lookup = id:match("^[Ee]%d+$") and id:sub(1, 1):upper() .. id:sub(2) or id
-  if not lookup:match("^E%d+$") and not lookup:match("^[Mm][%da-zA-Z]+$") then return false, "invalid_transaction" end
-  lookup = lookup:sub(1, 1):upper() .. lookup:sub(2):lower()
+  local lookup = id
+  if id:match("^[Ee][Pp]%d+$") then
+    lookup = "EP" .. id:sub(3)
+  elseif id:match("^[Ee]%d+$") then
+    lookup = "E" .. id:sub(2)
+  elseif id:match("^[Mm][%da-zA-Z%-]+$") then
+    local prefix_id = id:sub(2):lower()
+    lookup = "M" .. prefix_id
+  else
+    return false, "invalid_transaction"
+  end
   return self.store:run(guild, function(data)
     for i = #data.journal, 1, -1 do
       local entry = data.journal[i]
@@ -116,13 +128,17 @@ function Ledger:leaderboard(guild)
   end)
 end
 
-function Ledger:change(guild, user, interaction, kind, input, other)
+function Ledger:change(guild, user, interaction, kind, input, other, request_type)
   if not Store.valid_id(user) or not Store.valid_id(interaction) then return false, "invalid_user" end
   if kind == "pay" and (not Store.valid_id(other) or other == user) then return false, "invalid_target" end
+  request_type = request_type or "interaction"
+  if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
+  local receipt_key = request_type == "message" and ("message:" .. interaction) or interaction
+  local record_id = (request_type == "message" and "EP" or "E") .. interaction
   return self.store:run(guild, function(data)
-    if data.receipts[interaction] then
-      local previous = public_record(data.receipts[interaction])
-      previous.money_id = previous.money_id or money_id("E" .. interaction)
+    if data.receipts[receipt_key] then
+      local previous = public_record(data.receipts[receipt_key])
+      previous.money_id = previous.money_id or money_id(record_id)
       return true, previous, false
     end
     if #data.journal >= MAX_RECORDS then return false, "capacity" end
@@ -159,11 +175,11 @@ function Ledger:change(guild, user, interaction, kind, input, other)
       if a.wallet + value > MAX then return false, "overflow" end
       a.wallet, a[kind] = a.wallet + value, now
     end
-    local record = { id = "E" .. interaction, guild = guild, user = user, kind = kind,
+    local record = { id = record_id, guild = guild, user = user, kind = kind,
       amount = value, counterparty = other or "", timestamp = now, status = "committed" }
     data.journal[#data.journal + 1] = record
     local result = { id = record.id, money_id = money_id(record.id), amount = value, wallet = a.wallet, bank = a.bank }
-    data.receipts[interaction] = result
+    data.receipts[receipt_key] = result
     return true, result, true
   end)
 end
