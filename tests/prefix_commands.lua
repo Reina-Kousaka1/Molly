@@ -138,7 +138,7 @@ test("message and interaction identities remain namespaced and replay-safe", fun
   local prefix_found, prefix_record = env.ledger:transaction("10", "Mp-3uw")
   assert(slash_found and prefix_found and slash_record.id ~= prefix_record.id and slash_record.money_id ~= prefix_record.money_id)
   local second = message("5001", "10", "20", ".deposit 1")
-  assert(env.prefix:dispatch(second) and #data.journal == 4)
+  assert(env.prefix:dispatch(second) and #env.store.data["10"].journal == 4)
 end)
 
 test("prefix changes persist per guild and reset to dot without cross-guild effects", function()
