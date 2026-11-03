@@ -3,7 +3,7 @@ local Store = require("src.persistence.guild_store")
 local Prefix = {}
 Prefix.__index = Prefix
 
-local usage_argument = { user = "<@user>", amount = "<amount>" }
+local usage_argument = { user = "<@user>", amount = "<amount>", reason = "<reason>" }
 
 local function words(text)
   local result = {}
@@ -80,7 +80,8 @@ function Prefix:dispatch(message)
 
   local argument_names = definition.prefix.arguments or {}
   local arguments = words(raw_arguments or "")
-  if #arguments ~= #argument_names then
+  local has_reason_tail = argument_names[#argument_names] == "reason"
+  if (has_reason_tail and #arguments < #argument_names) or (not has_reason_tail and #arguments ~= #argument_names) then
     local usage = prefix .. command
     for _, name in ipairs(argument_names) do usage = usage .. " " .. (usage_argument[name] or ("<" .. name .. ">")) end
     self:_reply(message, "Usage: " .. usage, command)
@@ -89,7 +90,7 @@ function Prefix:dispatch(message)
 
   local parsed = {}
   for index, name in ipairs(argument_names) do
-    local value = arguments[index]
+    local value = name == "reason" and index == #argument_names and table.concat(arguments, " ", index) or arguments[index]
     if name == "user" then
       value = user_argument(value)
       if not value then

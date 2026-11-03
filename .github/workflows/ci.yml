@@ -31,6 +31,7 @@ jobs:
           lua5.1 tests/developer_lifecycle.lua
           lua5.1 tests/v2.lua
           lua5.1 tests/community.lua
+          lua5.1 tests/moderation_v2.lua
           lua5.1 tests/sprint.lua
 
       - name: Run economy command and ledger tests

@@ -1,11 +1,13 @@
 local Permissions = require("src.discord.permissions")
 local Hierarchy = require("src.moderation.hierarchy")
+local Purge = require("src.moderation.purge")
+local RolePolicy = require("src.discord.role_policy")
 local Store = require("src.persistence.guild_store")
 local Response = require("src.discord.response")
 local Embeds = require("src.discord.embeds")
 local Moderation = {}
 local private_responses = {
-  warn = true, hackban = true, warnings = true, case = true, cases = true, modlogs = true,
+  warn = true, hackban = true, delete = true, warnings = true, case = true, cases = true, modlogs = true,
   reason = true, delwarn = true, modlog = true,
 }
 
@@ -19,19 +21,42 @@ local function summary(c)
     c.status or (c.active and "active" or "removed"), when, text(c.reason):sub(1, 100))
 end
 
+local function has_guild_permission(ctx, permission)
+  if ctx.source ~= "message" then return Permissions.has(ctx.member and ctx.member.permissions, permission) end
+  if not ctx.bot or not ctx.bot.rest or not ctx.guild or not ctx.author then return false end
+  local allowed = RolePolicy.member_has_permission(ctx.bot.rest, ctx.guild.id, ctx.author.id, permission)
+  return allowed == true
+end
+
+local function bot_has_permission(ctx, permission)
+  if ctx.app_permissions ~= nil then return Permissions.has(ctx.app_permissions, permission) end
+  local bot_id = ctx.bot and ctx.bot.user and ctx.bot.user.id
+  if not ctx.bot or not ctx.bot.rest or not Store.valid_id(bot_id) then return false end
+  local allowed = RolePolicy.member_has_permission(ctx.bot.rest, ctx.guild.id, bot_id, permission)
+  return allowed == true
+end
+
 function Moderation.register(router, cases, options)
   options = options or {}
+  local purge = options.purge or Purge.new({ clock = options.clock })
   local function audit(ctx, action, item)
     if options.logs and item then
       options.logs:record(ctx.guild.id, "moderation", action .. " case " .. text(item.id)
         .. " for user " .. text(item.target) .. " by moderator " .. text(item.moderator))
     end
   end
-  local function add(name, description, permission, options, fn)
+  local function add(name, description, permission, command_options, fn, prefix)
     router:register({ name = name, description = description, category = "Moderation", permission = permission,
-      default_member_permissions = Permissions.flags[permission], options = options, execute = function(ctx)
-        if not ctx.guild or not ctx.author or not Permissions.has(ctx.member and ctx.member.permissions, permission) then
+      default_member_permissions = Permissions.flags[permission], options = command_options, prefix = prefix,
+      execute = function(ctx)
+        if not ctx.guild or not ctx.author or not has_guild_permission(ctx, permission) then
           ctx:respond("You do not have permission to use this command.", { ephemeral = true }); return
+        end
+        if ctx.source == "message" then
+          local ok, result = pcall(fn, ctx)
+          ctx:respond(ok and (type(result) == "string" and result or "Molly could not complete the request.")
+            or "Molly could not complete the request.")
+          return
         end
         if not Response.defer(ctx, private_responses[name] and { ephemeral = true } or nil) then return end
         local ok, result = pcall(fn, ctx)
@@ -49,7 +74,20 @@ function Moderation.register(router, cases, options)
     local confirmed = sent and type(message) == "table" and Store.valid_id(message.id)
     return confirmed and " Modlog sent." or " Case saved; modlog delivery was not confirmed."
   end
-  add("warn", "Record a warning for a server member", "manage_messages", {
+  add("delete", "Delete up to 100 recent messages from this channel", "manage_messages", {
+    { name = "count", description = "Number of recent messages to delete (1-100)", type = 4,
+      required = true, min_value = 1, max_value = 100 },
+  }, function(ctx)
+    local ok, deleted = purge:run(ctx, arg(ctx, "count"))
+    if not ok then
+      return deleted == "invalid_count" and "Choose between 1 and 100 messages (prefix alias .d supports up to 99)."
+        or deleted == "bot_permission_denied" and "Molly needs Manage Messages in this channel."
+        or "Molly could not verify or delete those messages. Only recent messages are eligible."
+    end
+    if options.logs and deleted > 0 then options.logs:record(ctx.guild.id, "moderation", "Message purge deleted " .. tostring(deleted) .. " recent messages.") end
+    return deleted > 0 and ("Deleted " .. tostring(deleted) .. " recent messages.") or "No recent messages eligible for deletion."
+  end, { arguments = { "count" }, aliases = { "d" } })
+  add("warn",  "Record a warning for a server member", "manage_messages", {
     option("user", "Server member", 6, true), option("reason", "Reason for the warning", 3, true),
   }, function(ctx)
     local user = arg(ctx, "user")
@@ -66,9 +104,10 @@ function Moderation.register(router, cases, options)
     local id, reason = arg(ctx, "user_id"), arg(ctx, "reason")
     if type(id) ~= "string" or #id < 17 or #id > 20 or not id:match("^[1-9]%d+$") or not Store.valid_id(id)
       or (#id == 20 and id > "18446744073709551615") then return "Invalid Discord user ID." end
-    if arg(ctx, "confirm") ~= true then return "Ban cancelled: confirmation is required." end
+    local confirmed = arg(ctx, "confirm") == true or (ctx.source == "message" and arg(ctx, "confirm") == "confirm")
+    if not confirmed then return "Ban cancelled: explicit confirmation is required." end
     if type(reason) ~= "string" or #reason == 0 or #reason > 500 or not reason:match("%S") then return "Provide a reason of at most 500 characters." end
-    if not Permissions.has(ctx.app_permissions, "ban_members") then return "Molly lacks the required ban permission." end
+    if not bot_has_permission(ctx, "ban_members") then return "Molly lacks the required ban permission." end
     if id == ctx.author.id or (ctx.bot.user and id == ctx.bot.user.id) then return "Cannot ban that user." end
     local guild_ok, guild = pcall(ctx.bot.rest.get_guild, ctx.bot.rest, ctx.guild.id)
     if not guild_ok or type(guild) ~= "table" or not Store.valid_id(guild.owner_id) or id == guild.owner_id then return "Cannot verify the server owner." end
@@ -78,7 +117,8 @@ function Moderation.register(router, cases, options)
     elseif type(member) ~= "table" or member.code ~= 10007 then
       return "Cannot verify whether that user is a server member."
     end
-    local recorded, result = cases:pending(ctx.guild.id, ctx.author.id, id, reason, ctx.interaction_id, "hackban")
+    local recorded, result = cases:pending(ctx.guild.id, ctx.author.id, id, reason,
+      ctx.interaction_id or ctx.request_id, "hackban")
     if not recorded then return "No ban was sent because the case could not be recorded." end
     local case = result.case
     if not result.fresh then return "This interaction was already recorded as " .. summary(case) .. "; no ban was repeated." end
@@ -94,7 +134,7 @@ function Moderation.register(router, cases, options)
     if not confirmed then return "Ban outcome is unknown; review case " .. case.id .. " before retrying." end
     audit(ctx, "Ban", updated)
     return "Discord confirms the ban: " .. summary(updated) .. log(ctx, updated)
-  end)
+  end, { arguments = { "confirm", "user_id", "reason" }, aliases = { "hb" } })
   add("warnings", "Show recent warnings for a member", "manage_messages", { option("user", "Server member", 6, true) }, function(ctx)
     local user = arg(ctx, "user")
     if not user or not Store.valid_id(user.id) then return "Choose a valid server member." end
