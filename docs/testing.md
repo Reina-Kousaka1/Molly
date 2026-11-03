@@ -28,8 +28,9 @@ with `luac5.1 -p` (override with `LUAC_BIN`), then includes:
 - `tests/prefix_commands.lua`
 - `tests/embeds.lua`
 - `tests/stress.lua` (synthetic in-memory ledger and journal-rotation benchmarks;
-  no SeaWorld connection; the CI ledger profile reaches 10,000 bookings and the
-  rotation microbenchmark reaches 100,000 appends)
+  no SeaWorld connection; the CI ledger profile reaches 100, 500, 1,000, 5,000,
+  and 10,000 bookings, while the rotation microbenchmark reaches 100,000
+  appends)
 
 Run the extended 100,000-operation profile explicitly with
 `MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua`. This profile is intentionally not

@@ -4,7 +4,8 @@ local Ledger = require("src.economy.ledger")
 
 local full_stress = os.getenv("MOLLY_STRESS_FULL") == "1"
 local rotation_milestones = { 100, 1000, 10000, 100000 }
-local ledger_milestones = full_stress and { 100, 1000, 10000, 100000 } or { 100, 1000, 10000 }
+local ledger_milestones = full_stress and { 100, 500, 1000, 5000, 10000, 100000 }
+  or { 100, 500, 1000, 5000, 10000 }
 local CAPACITY = Ledger.max_journal_records
 io.stdout:setvbuf("line")
 local function percentile(values, fraction)
