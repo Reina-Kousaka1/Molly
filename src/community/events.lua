@@ -16,6 +16,20 @@ local function safe(value, maximum)
 end
 
 local function safe_error_detail(value)
+  if type(value) == "table" then
+    local details = { "handler_error" }
+    local status = value.status_code or value.status
+    if type(status) == "number" and status % 1 == 0 and status >= 100 and status <= 599 then
+      details[#details + 1] = "http_status=" .. tostring(status)
+    end
+    local code = value.code
+    if type(code) == "number" and code % 1 == 0 and code >= 0 and code <= 9999999999 then
+      details[#details + 1] = "error_code=" .. tostring(code)
+    elseif type(code) == "string" and #code <= 10 and code:match("^%d+$") then
+      details[#details + 1] = "error_code=" .. code
+    end
+    return table.concat(details, " ")
+  end
   if type(value) ~= "string" then return "handler_error" end
   local source = value:match("^(.-%.lua:%d+):")
   local lowered = value:lower()

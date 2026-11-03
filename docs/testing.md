@@ -12,7 +12,8 @@ LUA_BIN=lua5.1 PYTHON_BIN=python3 tests/run_ci.sh
 ```
 
 `LUA_BIN` and `PYTHON_BIN` may be overridden with local executable paths. The
-Lua runner includes:
+runner first parses `molly.lua` and every Lua file under `src/` and `tests/`
+with `luac5.1 -p` (override with `LUAC_BIN`), then includes:
 
 - `tests/test.lua`
 - `tests/developer_lifecycle.lua`

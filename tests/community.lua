@@ -344,6 +344,20 @@ test("community handlers log safe error details, preserve unpack semantics, and 
   assert(ok, failure)
 end)
 
+test("structured community errors expose safe status codes without logging payloads", function()
+  local rows = {}
+  local events = CommunityEvents.new({ logger = { warn = function(_, name, fields)
+    rows[#rows + 1] = { name = name, fields = fields }
+  end } })
+  local ran = events:_run("rest_probe", function()
+    error({ status_code = 502, code = 50013, message = "private-token=fixture-secret" })
+  end)
+  assert(not ran and #rows == 1 and rows[1].name == "community_event_failed")
+  local detail = rows[1].fields.detail
+  assert(detail:find("http_status=502", 1, true) and detail:find("error_code=50013", 1, true))
+  assert(not detail:find("private-token", 1, true) and not detail:find("fixture-secret", 1, true))
+end)
+
 test("community commands register without configurable aliases", function()
   local store, settings = setup()
   local router = Router.new()

@@ -3,7 +3,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 LUA_BIN=${LUA_BIN:-lua5.1}
+LUAC_BIN=${LUAC_BIN:-luac5.1}
 PYTHON_BIN=${PYTHON_BIN:-python3}
+
+"$LUAC_BIN" -p molly.lua
+find src tests -type f -name '*.lua' -exec "$LUAC_BIN" -p {} +
 
 for suite in \
   tests/test.lua \
