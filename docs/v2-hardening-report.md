@@ -154,7 +154,8 @@ or live Lavalink endpoint was used. The existing `tests/run_integration.sh`
 requires an explicit disposable SeaWorld socket and confirmation variable; no
 such socket was set, so no SeaWorld integration test was started.
 
-GitHub Actions run 41687517286 passed the Lua 5.1 syntax check, all 12 plain
+GitHub Actions run 41688195950 on commit `7d6a90c9dd3a188355de6c355d51f755908dee0f`
+passed the Lua 5.1 syntax check, all 12 plain
 Lua suites (159 tests, zero failures), the CI-profile synthetic stress checks,
 the Python environment-transfer test (4 checks, zero failures), and diff
 whitespace validation. The separate 100,000-operation full profile was
@@ -195,6 +196,6 @@ cutover; no such migration is safe to design from the Molly adapter alone.
 
 ## Final measured results
 
-Most recent CI-tested commit: `08f66f76dc26b78f09806ff9a836db13bbf1d6ff`.
+Most recent CI-tested commit: `7d6a90c9dd3a188355de6c355d51f755908dee0f`.
 Real SeaWorld sizing, concurrency, and Luvit integration remain explicitly
 unverified until the disposable dependencies described above are provided.
