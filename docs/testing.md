@@ -27,6 +27,8 @@ with `luac5.1 -p` (override with `LUAC_BIN`), then includes:
 - `tests/economy_commands.lua`
 - `tests/prefix_commands.lua`
 - `tests/embeds.lua`
+- `tests/stress.lua` (synthetic in-memory ledger and journal-rotation benchmarks;
+  no SeaWorld connection)
 
 The Python test `tests/lavalink_env_transfer.py` uses the standard library and
 exercises the environment-configuration helper without Docker or live

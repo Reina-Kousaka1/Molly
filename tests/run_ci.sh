@@ -25,4 +25,5 @@ for suite in \
 do
   "$LUA_BIN" "$suite"
 done
+"$LUA_BIN" tests/stress.lua
 "$PYTHON_BIN" tests/lavalink_env_transfer.py
