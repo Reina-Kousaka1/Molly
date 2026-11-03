@@ -25,7 +25,7 @@ function Prefix.new(router, settings, options)
   local prefix = options.prefix or "."
   return setmetatable({ router = router, settings = settings, default_prefix = prefix,
     logger = options.logger, clock = options.clock or os.time, cache_ttl = options.cache_ttl or 30,
-    prefixes = {} }, Prefix)
+    prefixes = {}, bot = nil }, Prefix)
 end
 
 function Prefix:_reply(message, text, command)
@@ -103,6 +103,7 @@ function Prefix:dispatch(message)
   local context = {
     source = "message", transport = "message", message = message, guild = { id = message.guild_id },
     author = { id = message.author.id }, member = message.member,
+    bot = self.bot and (self.bot.client or self.bot) or nil,
     channel = message.channel or { id = message.channel_id, name = message.channel_name, type = message.channel_type },
     channel_id = message.channel_id, request_id = message.id, request_type = "message", command_prefix = prefix,
     get_arg = function(_, name) return parsed[name] end,
@@ -121,6 +122,7 @@ end
 
 function Prefix:register(bot)
   if not bot or type(bot.on_message) ~= "function" then return false, "message_event_unavailable" end
+  self.bot = bot
   bot:on_message(function(message) self:dispatch(message) end)
   return true
 end

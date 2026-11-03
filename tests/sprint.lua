@@ -140,7 +140,8 @@ test("staff notes are private and invalid staff actions fail", function()
   local reply, ephemeral
   local ctx = { guild = { id = "1" }, author = { id = "2" }, member = { permissions = "0" },
     respond = function(_, message, options) reply, ephemeral = message, options.ephemeral end }
-  assert(router:dispatch("staffinfo", ctx)); assert(ephemeral and reply:find("permission"))
+  local allowed, reason = router:dispatch("staffinfo", ctx)
+  assert(not allowed and reason == "permission_denied" and ephemeral and reply:find("permission"))
 end)
 test("hackban validates, checks permissions, stores a case and never replays", function()
   local store = memory_store(); local cases = Cases.new(store, function() return 100 end)
@@ -160,7 +161,9 @@ test("hackban validates, checks permissions, stores a case and never replays", f
   assert(router:dispatch("hackban", ctx)); assert(calls == 1 and output:find("C1") and output:find("not configured"))
   assert(router:dispatch("hackban", ctx)); assert(calls == 1 and output:find("no ban was repeated"))
   ctx.args.user_id = "invalid"; assert(router:dispatch("hackban", ctx)); assert(calls == 1 and output:find("Invalid"))
-  ctx.member.permissions = "0"; assert(router:dispatch("hackban", ctx)); assert(reply:find("permission") and calls == 1)
+  ctx.member.permissions = "0"
+  local denied, denial_reason = router:dispatch("hackban", ctx)
+  assert(not denied and denial_reason == "permission_denied" and reply:find("permission") and calls == 1)
   ctx.member.permissions, ctx.app_permissions, ctx.args.user_id = "4", "0", "12345678901234567"
   assert(router:dispatch("hackban", ctx)); assert(calls == 1 and output:find("lacks"))
   ctx.app_permissions = "4"
