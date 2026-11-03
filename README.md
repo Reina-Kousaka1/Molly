@@ -45,6 +45,12 @@ Molly has her own presence/personality layer rather than borrowing status text f
 
 Molly supports guild-only message commands through the same central router and command handlers used by slash commands. The default prefix is `.`; `.money` aliases the balance handler. Economy commands include `.balance`, `.bank`, `.daily`, `.weekly`, `.work`, `.deposit`, `.withdraw`, `.pay`, `.transactions`, and `.leaderboard`. Informational commands include `.uptime`, `.botinfo`, `.channelinfo`, `.help`, and `.about`. Guild managers can use `/settings prefix show|set|reset` and `/settings economy show|currency-name|currency-symbol|reset`. Prefixes are persisted per guild (printable ASCII, 1–8 characters); economy currency display settings are also guild-scoped and never change stored amounts. Prefix handling requires Discord's privileged **Message Content** Gateway Intent to be enabled in the Developer Portal as well as requested by Molly; this repository change does not enable it in the Portal.
 
+### Guild permissions and community features
+
+The V2 foundation adds guild-isolated modular settings, a central command permission engine, welcome/goodbye messages, event logs, per-guild AFK statuses, safe self-assignable roles, and a reaction starboard. Guild overrides cannot grant developer, protected, or admin access; `MOLLY_DEVELOPER_IDS` remains authoritative. New features default off where they publish messages or change guild roles, and use bounded per-guild state. See [docs/v2-community.md](docs/v2-community.md) for command syntax, storage, limits, required Discord permissions, and API-version caveats.
+
+Automatic welcome/goodbye delivery and member-count tracking require the privileged `GUILD_MEMBERS` Gateway Intent. It remains opt-in (`MOLLY_GUILD_MEMBERS_INTENT=false` by default) and must also be enabled in the Discord Developer Portal. Prefix commands separately require the Message Content intent.
+
 ## Architecture
 
 At a high level:
@@ -163,13 +169,19 @@ Do not start two Molly instances with the same Discord token. In particular, a l
 
 ## Tests
 
-The repository contains a self-contained Lua test runner:
+The repository contains self-contained Lua 5.1 test runners:
 
 ```sh
 lua5.1 tests/test.lua
+lua5.1 tests/developer_lifecycle.lua
+lua5.1 tests/v2.lua
+lua5.1 tests/community.lua
+lua5.1 tests/sprint.lua
+lua5.1 tests/economy_commands.lua
+lua5.1 tests/prefix_commands.lua
 ```
 
-The suite covers Molly's core modules and contracts, including Discord routing/response behavior, configuration, persistence boundaries, economy/moderation/staff behavior, music adapters, and failure handling as those areas evolve.
+The suites cover Molly's core modules and contracts, including Discord routing/response behavior, configuration, persistence boundaries, economy/moderation/staff behavior, music adapters, V2 settings and permissions, community events, and failure handling as those areas evolve.
 
 Tests that require a real external service should remain isolated from production resources.
 
@@ -177,12 +189,7 @@ Tests that require a real external service should remain isolated from productio
 
 GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`.
 
-The workflow currently performs:
-
-```sh
-lua5.1 tests/test.lua
-git diff --check
-```
+The workflow runs the core, lifecycle, V2, community, sprint, economy-command, and prefix-command suites, then checks whitespace with `git diff --check`.
 
 CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or production SeaWorld access.
 

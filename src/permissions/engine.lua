@@ -107,9 +107,9 @@ function Engine:_rules(guild)
     local permissions, reason = V2.read_section(data, "permissions")
     if not permissions then return false, reason end
     local value = permissions.rules or {}
-    if type(value) ~= "table" then return false, "invalid_rules_type_" .. type(value) end
+    if type(value) ~= "table" then return false, "invalid_store" end
     local total = count_rules(value)
-    if total == nil then return false, "invalid_rules_contents" end
+    if total == nil then return false, "invalid_store" end
     return true, value, false
   end)
   if not ok then return false, rules end

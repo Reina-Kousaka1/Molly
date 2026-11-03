@@ -42,7 +42,7 @@ Schema.defaults = {
   roles = { self_assignable = {} },
   starboard = {
     enabled = false, channel_id = "", emoji = "⭐", threshold = 3,
-    self_star = false, ignored_channels = {},
+    ignored_channels = {},
   },
   content = { mature_enabled = false },
   shop = { enabled = true },
@@ -96,7 +96,7 @@ function Schema.normalize(name, saved)
       or type(result.emoji) ~= "string" or #result.emoji < 1 or #result.emoji > 80
       or result.emoji:find("[%c%s]") or type(result.threshold) ~= "number"
       or result.threshold % 1 ~= 0 or result.threshold < 1 or result.threshold > 100
-      or type(result.self_star) ~= "boolean" or type(result.ignored_channels) ~= "table"
+      or type(result.ignored_channels) ~= "table"
       or #result.ignored_channels > 100 then return nil, "invalid_setting" end
     local seen = {}
     for _, id in ipairs(result.ignored_channels) do

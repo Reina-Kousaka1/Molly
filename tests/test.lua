@@ -39,6 +39,15 @@ test("config validates without disclosing a token", function()
   assert(not table.concat(errors, ","):find("fixture", 1, true))
 end)
 
+test("member events require explicit opt-in to the privileged Discord intent", function()
+  local config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x" }))
+  assert(config.discord.guild_members_intent == false)
+  config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_GUILD_MEMBERS_INTENT = "true" }))
+  assert(config.discord.guild_members_intent == true)
+  local invalid, errors = Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_GUILD_MEMBERS_INTENT = "maybe" })
+  assert(invalid == nil and errors[1] == "MOLLY_GUILD_MEMBERS_INTENT")
+end)
+
 test("config accepts namespaced SeaWorld configuration", function()
   local config = assert(Config.load({
     MOLLY_DISCORD_TOKEN = string.rep("x", 1),

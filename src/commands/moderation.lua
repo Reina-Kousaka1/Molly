@@ -19,7 +19,14 @@ local function summary(c)
     c.status or (c.active and "active" or "removed"), when, text(c.reason):sub(1, 100))
 end
 
-function Moderation.register(router, cases)
+function Moderation.register(router, cases, options)
+  options = options or {}
+  local function audit(ctx, action, item)
+    if options.logs and item then
+      options.logs:record(ctx.guild.id, "moderation", action .. " case " .. text(item.id)
+        .. " for user " .. text(item.target) .. " by moderator " .. text(item.moderator))
+    end
+  end
   local function add(name, description, permission, options, fn)
     router:register({ name = name, description = description, category = "Moderation", permission = permission,
       default_member_permissions = Permissions.flags[permission], options = options, execute = function(ctx)
@@ -49,6 +56,7 @@ function Moderation.register(router, cases)
     if not user or not Hierarchy.check(ctx, user.id) then return "Cannot verify the target's role hierarchy." end
     local ok, case = cases:warn(ctx.guild.id, ctx.author.id, user.id, arg(ctx, "reason"), ctx.interaction_id)
     if not ok then return "The warning was not confirmed; check cases before retrying." end
+    audit(ctx, "Warning", case)
     return "Warning recorded: " .. summary(case) .. log(ctx, case)
   end)
   add("hackban", "Ban a user ID even if they are not a member", "ban_members", {
@@ -84,6 +92,7 @@ function Moderation.register(router, cases)
         or ("Ban outcome is unknown; case " .. case.id .. " needs reconciliation. Do not retry blindly.")
     end
     if not confirmed then return "Ban outcome is unknown; review case " .. case.id .. " before retrying." end
+    audit(ctx, "Ban", updated)
     return "Discord confirms the ban: " .. summary(updated) .. log(ctx, updated)
   end)
   add("warnings", "Show recent warnings for a member", "manage_messages", { option("user", "Server member", 6, true) }, function(ctx)
@@ -110,12 +119,14 @@ function Moderation.register(router, cases)
     option("id", "Molly case ID", 3, true), option("reason", "New reason", 3, true),
   }, function(ctx)
     local ok, case = cases:edit(ctx.guild.id, arg(ctx, "id"), ctx.author.id, "reason", arg(ctx, "reason"))
+    if ok then audit(ctx, "Case reason updated", case) end
     return ok and ("Case updated: " .. summary(case) .. log(ctx, case)) or "Case update was not confirmed."
   end)
   add("delwarn", "Remove an active warning", "manage_messages", { option("id", "Molly case ID", 3, true) }, function(ctx)
     local found, case = cases:get(ctx.guild.id, arg(ctx, "id"))
     if not found or not Hierarchy.check(ctx, case.target) then return "Cannot verify the case or target hierarchy." end
     local ok, updated = cases:edit(ctx.guild.id, case.id, ctx.author.id, "remove")
+    if ok then audit(ctx, "Warning removed", updated) end
     return ok and ("Warning removed: " .. summary(updated) .. log(ctx, updated)) or "Warning removal was not confirmed."
   end)
   add("modstats", "Show recent moderation case counts", "manage_messages", nil, function(ctx)
@@ -138,6 +149,7 @@ function Moderation.register(router, cases)
     end
     local ok, channel = cases:modlog(ctx.guild.id, mode, selected and selected.id)
     if not ok then return "Modlog configuration was not confirmed." end
+    if mode ~= "status" and options.logs then options.logs:record(ctx.guild.id, "settings", "Moderation modlog settings updated.") end
     return channel == "" and "Modlog delivery is disabled." or ("Modlog channel ID: " .. text(channel))
   end)
 end
