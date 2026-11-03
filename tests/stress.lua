@@ -18,7 +18,7 @@ local function benchmark_rotation(total, ring)
     local before = os.clock()
     if ring then
       if count < CAPACITY then
-        local slot = ((head + count - 2) % CAPACITY) + 1
+        local slot = ((head + count - 1) % CAPACITY) + 1
         entries[slot], count = index, count + 1
       else
         entries[head] = index
