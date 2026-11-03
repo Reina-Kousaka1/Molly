@@ -23,7 +23,7 @@ The economy layer provides persistent guild/user state and transaction-oriented 
 
 The implementation is designed to preserve request correlation and avoid reporting successful writes when persistence fails.
 
-Economy receipts keep their original `E<interaction-id>` journal key for slash-command idempotency and backward compatibility. Prefix requests use `message:<message-id>` receipt keys and `EP<message-id>` journal IDs, so they cannot collide with interaction receipts. Molly derives shorter base-36 Money IDs (`M...` for interactions and `Mp-...` for messages); `/transactions` shows them, `/transaction id:<id>` looks them up within the current server, and existing `E...` IDs remain accepted.
+Slash and prefix economy requests use separate namespaced idempotency receipts; legacy economy receipts are read and migrated lazily. Canonical journal IDs remain `E<interaction-id>` for slash commands and `EP<message-id>` for prefixes. The ledger retains up to 5,000 economy receipts per guild and rejects expired IDs rather than replaying old actions. Its journal rotates at 1,000 rows, so transaction lookup is limited to retained history. Molly derives shorter base-36 Money IDs (`M...` for interactions and `Mp-...` for messages); `/transactions` shows them and `/transaction id:<id>` looks them up within the current server. See [economy retention](docs/v2-economy-modes.md#economy-commands) for details.
 
 ### Staff management
 
@@ -171,33 +171,13 @@ Do not start two Molly instances with the same Discord token. In particular, a l
 
 ## Tests
 
-The repository contains self-contained Lua 5.1 test runners:
-
-```sh
-lua5.1 tests/test.lua
-lua5.1 tests/developer_lifecycle.lua
-lua5.1 tests/v2.lua
-lua5.1 tests/community.lua
-lua5.1 tests/economy_v2.lua
-lua5.1 tests/observability.lua
-lua5.1 tests/music_voice.lua
-lua5.1 tests/moderation_v2.lua
-lua5.1 tests/sprint.lua
-lua5.1 tests/economy_commands.lua
-lua5.1 tests/prefix_commands.lua
-```
-
-The suites cover Molly's core modules and contracts, including Discord routing/response behavior, configuration, persistence boundaries, economy/moderation/staff behavior, music adapters, V2 settings and permissions, community events, and failure handling as those areas evolve.
-
-Tests that require a real external service should remain isolated from production resources.
+See [`docs/testing.md`](docs/testing.md) for the complete classification and commands. The CI-safe Lua 5.1 suites and `tests/embeds.lua`, plus the standalone Python configuration test, run without Discord, Lavalink, or SeaWorld services. `tests/run_luvit.sh` runs the two Luvit/dependency-based suites. SeaWorld integration checks are separate and require an explicitly confirmed disposable test service; never point them at production.
 
 ## Continuous Integration
 
-GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`.
+GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`. It runs all plain Lua 5.1 suites, `tests/embeds.lua`, and `tests/lavalink_env_transfer.py`, then checks the complete PR/commit diff with `git diff --check`.
 
-The workflow runs the core, lifecycle, V2, community, moderation, economy/mode, music/voice, observability, sprint, economy-command, and prefix-command suites, then checks whitespace with `git diff --check`.
-
-CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or production SeaWorld access.
+CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or SeaWorld access. The Luvit and SeaWorld integration suites are documented separately and are not reported as CI-verified.
 
 A green CI run verifies the repository test contract; it does not by itself prove that a particular Raspberry Pi deployment is running the same commit or configuration.
 

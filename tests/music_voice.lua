@@ -340,6 +340,21 @@ test("dynamic voice guild and member caches are bounded and incomplete membershi
   equal(tracked, Dynamic.max_tracked_guilds)
 end)
 
+test("decimal permission arithmetic preserves huge values and rejects underflow", function()
+  local decimal = Dynamic.decimal
+  equal(decimal.add("999999", "1"), "1000000")
+  equal(decimal.subtract("1000000", "1"), "999999")
+  equal(decimal.subtract("1048576", "1048576"), "0")
+  assert(decimal.subtract("0", "1048576") == nil)
+  assert(decimal.subtract("1048575", "1048576") == nil)
+  equal(decimal.add("9007199254740993", "1048576"), "9007199255789569")
+  equal(decimal.subtract("9007199255789572", "1048576"), "9007199254740996")
+  equal(decimal.set_bit("9007199254740993", 1048576, true), "9007199255789569")
+  equal(decimal.set_bit("1048576", 1048576, false), "0")
+  assert(decimal.set_bit("-1", 1048576, true) == nil)
+  assert(decimal.add(9007199254740993, 1048576) == nil, "numeric masks must be rejected rather than rounded")
+end)
+
 test("temporary voice permissions preserve other overwrite bits and enforce owner access", function()
   local store, rest = mock_store(), mock_rest()
   local dynamic = Dynamic.new(store, { rest = rest, bot_id = "999" })
@@ -355,6 +370,24 @@ test("temporary voice permissions preserve other overwrite bits and enforce owne
   assert(dynamic:owner_action("100", "600", "300", "reject", "301", false))
   equal(rest.overwrites["600"]["301"].deny, "1048576")
   assert(dynamic:owner_action("100", "600", "300", "transfer", "301", true) == false)
+end)
+
+test("permission overwrite edits round-trip large decimal masks without float conversion", function()
+  local store, rest = mock_store(), mock_rest()
+  rest.channels["600"] = { id = "600", guild_id = "100", type = 2, permission_overwrites = {
+    { id = "301", type = 1, allow = "9007199254740993", deny = "9007199255789572" },
+  } }
+  local dynamic = Dynamic.new(store, { rest = rest })
+  dynamic.temporary["100"] = { ["600"] = { guild_id = "100", channel_id = "600", owner_id = "300", locked = false } }
+  assert(dynamic:owner_action("100", "600", "300", "permit", "301", false))
+  equal(rest.overwrites["600"]["301"].allow, "9007199255789569")
+  equal(rest.overwrites["600"]["301"].deny, "9007199254740996")
+
+  rest.channels["600"].permission_overwrites[1].allow = "-1"
+  local previous = rest.overwrites["600"]["301"]
+  local ok, reason = dynamic:owner_action("100", "600", "300", "permit", "301", false)
+  assert(not ok and reason == "invalid_permissions")
+  assert(rest.overwrites["600"]["301"] == previous, "malformed decimal masks must fail before REST mutation")
 end)
 
 test("restart recovery only removes empty channels recorded by Molly", function()

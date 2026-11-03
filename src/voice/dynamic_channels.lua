@@ -50,44 +50,69 @@ local function set_pending_move(self, guild_id, user_id, move)
   return true
 end
 
+local function normalize_decimal(value)
+  if type(value) ~= "string" or not value:match("^%d+$") then return nil end
+  local normalized = value:gsub("^0+", "")
+  return normalized == "" and "0" or normalized
+end
+
+local function compare_decimal(left, right)
+  left, right = normalize_decimal(left), normalize_decimal(right)
+  if not left or not right then return nil end
+  if #left < #right then return -1 end
+  if #left > #right then return 1 end
+  if left < right then return -1 end
+  if left > right then return 1 end
+  return 0
+end
+
 local function decimal_bit(value, bit)
+  local normalized = normalize_decimal(value)
+  if not normalized or type(bit) ~= "number" or bit < 1 or bit % 1 ~= 0 then return nil end
   local modulus, remainder = bit * 2, 0
-  for digit in tostring(value or "0"):gmatch("%d") do remainder = (remainder * 10 + tonumber(digit)) % modulus end
+  for digit in normalized:gmatch("%d") do remainder = (remainder * 10 + tonumber(digit)) % modulus end
   return remainder >= bit
 end
 
 local function decimal_add(value, amount)
-  local digits, carry, index = {}, amount, #value
-  while index > 0 or carry > 0 do
-    local sum = (index > 0 and tonumber(value:sub(index, index)) or 0) + carry
-    digits[#digits + 1] = tostring(sum % 10)
+  local left, right = normalize_decimal(value), normalize_decimal(amount)
+  if not left or not right then return nil end
+  local result, carry, i, j = {}, 0, #left, #right
+  while i > 0 or j > 0 or carry > 0 do
+    local sum = carry
+    if i > 0 then sum, i = sum + tonumber(left:sub(i, i)), i - 1 end
+    if j > 0 then sum, j = sum + tonumber(right:sub(j, j)), j - 1 end
+    result[#result + 1] = tostring(sum % 10)
     carry = math.floor(sum / 10)
-    index = index - 1
   end
-  while index > 0 do digits[#digits + 1] = value:sub(index, index); index = index - 1 end
-  local result = {}; for i = #digits, 1, -1 do result[#result + 1] = digits[i] end
-  return table.concat(result)
+  local output = {}; for index = #result, 1, -1 do output[#output + 1] = result[index] end
+  return table.concat(output)
 end
 
 local function decimal_subtract(value, amount)
-  local digits, borrow, index = {}, amount, #value
-  while index > 0 do
-    local digit = tonumber(value:sub(index, index)) - borrow % 10
-    borrow = math.floor(borrow / 10)
-    if digit < 0 then digit, borrow = digit + 10, borrow + 1 end
-    digits[#digits + 1] = tostring(digit)
-    index = index - 1
+  local left, right = normalize_decimal(value), normalize_decimal(amount)
+  if not left or not right or compare_decimal(left, right) < 0 then return nil end
+  local result, borrow, i, j = {}, 0, #left, #right
+  while i > 0 do
+    local digit = tonumber(left:sub(i, i)) - borrow
+    if j > 0 then digit = digit - tonumber(right:sub(j, j)) end
+    if digit < 0 then digit, borrow = digit + 10, 1 else borrow = 0 end
+    result[#result + 1] = tostring(digit)
+    i, j = i - 1, j - 1
   end
-  while #digits > 1 and digits[#digits] == "0" do table.remove(digits) end
-  local result = {}; for i = #digits, 1, -1 do result[#result + 1] = digits[i] end
-  return table.concat(result)
+  if borrow ~= 0 or j > 0 then return nil end
+  while #result > 1 and result[#result] == "0" do table.remove(result) end
+  local output = {}; for index = #result, 1, -1 do output[#output + 1] = result[index] end
+  return table.concat(output)
 end
 
 local function set_bit(value, bit, enabled)
-  value = tostring(value or "0")
+  value = normalize_decimal(value)
+  if not value then return nil end
   local has = decimal_bit(value, bit)
-  if enabled and not has then return decimal_add(value, bit) end
-  if not enabled and has then return decimal_subtract(value, bit) end
+  if has == nil then return nil end
+  if enabled and not has then return decimal_add(value, tostring(bit)) end
+  if not enabled and has then return decimal_subtract(value, tostring(bit)) end
   return value
 end
 
@@ -535,6 +560,7 @@ function Dynamic:owner_action(guild_id, channel_id, actor_id, action, value, is_
     local allow = set_bit(existing and existing.allow or "0", CONNECT, not should_deny)
     local deny = set_bit(existing and existing.deny or "0", CONNECT, should_deny)
     if action == "unlock" or action == "permit" then deny = set_bit(deny, CONNECT, false) end
+    if not allow or not deny then return false, "invalid_permissions" end
     local called, result = pcall(self.rest.edit_channel_permissions, self.rest, channel_id, target,
       { type = type_value, allow = allow, deny = deny })
     if not rest_succeeded(called, result) then return false, "discord_unavailable" end
@@ -553,4 +579,5 @@ Dynamic.max_tracked_members = MAX_TRACKED_MEMBERS
 Dynamic.max_temp_rooms = MAX_TEMP_ROOMS
 Dynamic.max_pending_events = MAX_PENDING_EVENTS
 Dynamic.max_pending_moves = MAX_PENDING_MOVES
+Dynamic.decimal = { bit = decimal_bit, add = decimal_add, subtract = decimal_subtract, set_bit = set_bit }
 return Dynamic

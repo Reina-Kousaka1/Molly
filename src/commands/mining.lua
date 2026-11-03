@@ -15,6 +15,8 @@ function Commands.register(router, mining)
       if not ok then
         local messages = {
           mode_unavailable = "Mining is unavailable in this server mode.",
+          replay_conflict = "This request ID was already used for a different economy action; no new changes were made.",
+          replay_expired = "This request is outside the retained retry window; no new mining action was made.",
           pickaxe_required = "You need a pickaxe. Enable the shop and buy one with `/shop buy`.",
           cooldown = "You need to wait before mining again.",
           capacity = "Your inventory or the economy has reached its current limit.",

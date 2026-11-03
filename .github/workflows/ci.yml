@@ -11,13 +11,15 @@ permissions:
 
 jobs:
   test:
-    name: Lua 5.1 tests
+    name: Lua 5.1 and Python tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Lua 5.1
         run: |
@@ -25,23 +27,18 @@ jobs:
           sudo apt-get install -y lua5.1
           lua5.1 -v
 
-      - name: Run tests
+      - name: Run CI-safe test matrix
+        run: LUA_BIN=lua5.1 PYTHON_BIN=python3 tests/run_ci.sh
+
+      - name: Check whitespace in the PR or pushed commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          lua5.1 tests/test.lua
-          lua5.1 tests/developer_lifecycle.lua
-          lua5.1 tests/v2.lua
-          lua5.1 tests/community.lua
-          lua5.1 tests/economy_v2.lua
-          lua5.1 tests/observability.lua
-          lua5.1 tests/music_voice.lua
-          lua5.1 tests/moderation_v2.lua
-          lua5.1 tests/sprint.lua
-
-      - name: Run economy command and ledger tests
-        run: lua5.1 tests/economy_commands.lua
-
-      - name: Run prefix command and economy tests
-        run: lua5.1 tests/prefix_commands.lua
-
-      - name: Check whitespace
-        run: git diff --check
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --check "$BASE_SHA...HEAD"
+          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$BEFORE_SHA...HEAD"
+          else
+            git diff --check HEAD
+          fi

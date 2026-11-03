@@ -90,6 +90,11 @@ test("ledger keeps the E transaction ID, supports replay, and looks up legacy jo
   found, entry = ledger:transaction("100", old_money_id)
   assert(found and entry.id == "E9999999999999999999", "legacy rows resolve by their derived Money ID")
   store.data["100"].receipts["888"] = { id = "E888", amount = 2, wallet = 2, bank = 0 }
+  store.data["100"].journal[#store.data["100"].journal + 1] = {
+    id = "E888", guild = "100", user = "201", kind = "pay", amount = 2,
+    counterparty = "200", timestamp = 12344, status = "committed",
+  }
+  store.data["100"].economy_receipts_migrated = nil -- exercise a one-time upgrade from a legacy store
   local journal_count = #store.data["100"].journal
   ok, result = ledger:change("100", "201", "888", "pay", "2", "200")
   assert(ok and result.id == "E888" and result.money_id == "Moo" and #store.data["100"].journal == journal_count,

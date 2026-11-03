@@ -2,6 +2,7 @@ local Store = require("src.persistence.guild_store")
 
 local Events = {}
 Events.__index = Events
+local unpack_values = table.unpack or unpack
 
 local function snowflake(value)
   if Store.valid_id(value) then return value end
@@ -14,6 +15,21 @@ local function safe(value, maximum)
     :gsub("[%z\1-\8\11\12\14-\31\127]", " "):sub(1, maximum or 120)
 end
 
+local function safe_error_detail(value)
+  if type(value) ~= "string" then return "handler_error" end
+  local source = value:match("^(.-%.lua:%d+):")
+  local lowered = value:lower()
+  local category = "handler_error"
+  if lowered:find("attempt to index", 1, true) then category = "attempt_to_index"
+  elseif lowered:find("attempt to call", 1, true) then category = "attempt_to_call"
+  elseif lowered:find("bad argument", 1, true) then category = "bad_argument"
+  elseif lowered:find("assertion failed", 1, true) then category = "assertion_failed"
+  elseif lowered:find("stack overflow", 1, true) then category = "stack_overflow"
+  elseif lowered:find("out of memory", 1, true) then category = "out_of_memory" end
+  if source then return safe(source, 160) .. ": " .. category end
+  return category
+end
+
 function Events.new(options)
   options = options or {}
   return setmetatable({ greetings = options.greetings, afk = options.afk, logs = options.logs,
@@ -21,10 +37,15 @@ function Events.new(options)
 end
 
 function Events:_run(name, callback, ...)
+  if type(callback) ~= "function" then return false, "handler_unavailable" end
   local args = { n = select("#", ...), ... }
-  local ok = pcall(function() callback(unpack(args, 1, args.n)) end)
-  if not ok and self.logger then self.logger:warn("community_event_failed", { event = name, detail = "handler_error" }) end
-  return ok
+  local ok, result = pcall(function() return callback(unpack_values(args, 1, args.n)) end)
+  if not ok and self.logger and type(self.logger.warn) == "function" then
+    pcall(self.logger.warn, self.logger, "community_event_failed", {
+      event = safe(name, 80), detail = safe_error_detail(result),
+    })
+  end
+  return ok, result
 end
 
 function Events:_bind(client, event, callback)
@@ -61,16 +82,30 @@ function Events:bind(client, bot)
   self:_bind(client, "guild_member_add", function(member)
     local guild_id = type(member) == "table" and snowflake(member.guild_id)
     if not guild_id then return end
-    local count = self.greetings and self.greetings:member_joined(guild_id)
-    if self.greetings then self.greetings:send_event(guild_id, "welcome", member, count) end
-    if self.logs then self.logs:record(guild_id, "member_join", "Member joined: " .. safe(member.user and member.user.id, 24)) end
+    local count
+    if self.greetings then
+      local counted, result = self:_run("guild_member_add_count", self.greetings.member_joined, self.greetings, guild_id)
+      if counted then count = result end
+      self:_run("guild_member_add_welcome", self.greetings.send_event, self.greetings, guild_id, "welcome", member, count)
+    end
+    if self.logs then
+      self:_run("guild_member_add_log", self.logs.record, self.logs, guild_id,
+        "member_join", "Member joined: " .. safe(member.user and member.user.id, 24))
+    end
   end)
   self:_bind(client, "guild_member_remove", function(member)
     local guild_id = type(member) == "table" and snowflake(member.guild_id)
     if not guild_id then return end
-    local count = self.greetings and self.greetings:member_left(guild_id)
-    if self.greetings then self.greetings:send_event(guild_id, "goodbye", member, count) end
-    if self.logs then self.logs:record(guild_id, "member_leave", "Member left: " .. safe(member.user and member.user.id, 24)) end
+    local count
+    if self.greetings then
+      local counted, result = self:_run("guild_member_remove_count", self.greetings.member_left, self.greetings, guild_id)
+      if counted then count = result end
+      self:_run("guild_member_remove_goodbye", self.greetings.send_event, self.greetings, guild_id, "goodbye", member, count)
+    end
+    if self.logs then
+      self:_run("guild_member_remove_log", self.logs.record, self.logs, guild_id,
+        "member_leave", "Member left: " .. safe(member.user and member.user.id, 24))
+    end
   end)
   self:_bind(client, "guild_ban_add", function(ban)
     local guild_id = type(ban) == "table" and snowflake(ban.guild_id)

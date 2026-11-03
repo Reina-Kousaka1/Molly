@@ -13,6 +13,7 @@ local MusicAdapter = require("src.music.adapter")
 local LavalinkClient = require("src.music.lavalink_client")
 local SeaWorldConnector = require("src.persistence.seaworld_connector")
 local GuildStore = require("src.persistence.guild_store")
+local Ledger = require("src.economy.ledger")
 local Health = require("src.health")
 local Response = require("src.discord.response")
 
@@ -334,6 +335,55 @@ test("a failed or timed-out guild session cannot damage another guild or be reus
   assert(retry_ok and base.data["10"].accounts["101"].wallet == 11)
   assert(#base.sessions == 3 and base.sessions[1] ~= base.sessions[3])
   assert(base.closes == 3 and not base.leaked)
+end)
+
+test("guild store reports an unknown outcome when commit acknowledgement is lost", function()
+  for _, mode in ipairs({ "returned_error", "raised_error" }) do
+    local base, store = persistence_fixture(), nil
+    store = GuildStore.new(base)
+    local open_session = base.session
+    function base:session()
+      local session = open_session(self)
+      function session:commit()
+        self.base.data[self.guild] = self.tx_data -- simulate a commit reaching SeaWorld before its reply is lost
+        self.base.commits[self.guild] = (self.base.commits[self.guild] or 0) + 1
+        self.in_transaction, self.tx_data = false, nil
+        if mode == "raised_error" then error("commit reply lost") end
+        return false, "timeout"
+      end
+      return session
+    end
+    local ok, reason = store:run("10", function(data)
+      data.accounts["101"] = { wallet = 10 }
+      return true, "saved", true
+    end)
+    assert(not ok and reason == "outcome_unknown")
+    assert(base.data["10"].accounts["101"].wallet == 10 and base.commits["10"] == 1)
+    assert(not base.rollbacks["10"] and base.closes == 1 and not store.busy_guilds["10"])
+  end
+end)
+
+test("ledger retry after an unknown commit replays the persisted receipt without duplicating a reward", function()
+  local base = persistence_fixture()
+  local store = GuildStore.new(base)
+  local open_session, lose_acknowledgement = base.session, true
+  function base:session()
+    local session = open_session(self)
+    function session:commit()
+      self.base.data[self.guild] = self.tx_data
+      self.base.commits[self.guild] = (self.base.commits[self.guild] or 0) + 1
+      self.in_transaction, self.tx_data = false, nil
+      if lose_acknowledgement then lose_acknowledgement = false; return false, "timeout" end
+      return true
+    end
+    return session
+  end
+  local ledger = Ledger.new(store, function() return 2000000000 end)
+  local ok, reason = ledger:change("10", "101", "2001", "daily")
+  assert(not ok and reason == "outcome_unknown")
+  local replayed, result = ledger:change("10", "101", "2001", "daily")
+  assert(replayed and result.wallet == 100)
+  assert(base.data["10"].accounts["101"].wallet == 100 and #base.data["10"].journal == 1)
 end)
 
 test("connector sessions fork the connection and keep transaction lifecycle local", function()

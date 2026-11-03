@@ -304,6 +304,46 @@ test("community event wiring uses per-guild settings and bounds callbacks", func
   assert(#sent == 3)
 end)
 
+test("community handlers log safe error details, preserve unpack semantics, and isolate companion handlers", function()
+  local logger_rows, calls, listeners = {}, {}, {}
+  local logger = { warn = function(_, event, fields) logger_rows[#logger_rows + 1] = { event = event, fields = fields } end }
+  local greetings = {
+    set_runtime = function() end,
+    member_joined = function() error("member count failed token=fixture-secret 123456789012345678") end,
+    send_event = function(_, guild, kind, member, count)
+      calls.welcome = { guild = guild, kind = kind, member = member, count = count }
+    end,
+  }
+  local logs = { record = function(_, guild, kind) calls.log = { guild = guild, kind = kind } end }
+  local events = CommunityEvents.new({ greetings = greetings, logs = logs, logger = logger })
+  local client = { on = function(_, name, callback) listeners[name] = callback end }
+  local old_unpack = _G.unpack
+  local ok, failure = pcall(function()
+    _G.unpack = nil -- Lua 5.1's captured global fallback must survive a missing global at dispatch.
+    assert(events:bind(client))
+    local member = { guild_id = "100", content = "private-member-payload", user = { id = "123456789012345678" } }
+    listeners.guild_member_add(member)
+    assert(calls.welcome and calls.welcome.guild == "100" and calls.welcome.kind == "welcome")
+    assert(calls.log and calls.log.guild == "100" and calls.log.kind == "member_join")
+    assert(#logger_rows == 1 and logger_rows[1].event == "community_event_failed")
+    local detail = logger_rows[1].fields.detail
+    assert(detail:find("tests/community.lua:", 1, true) and detail:find("handler_error", 1, true),
+      "the handler and source location must be diagnosable")
+    assert(not detail:find("member count failed", 1, true), "exception text can contain private payloads")
+    assert(not detail:find("fixture-secret", 1, true) and not detail:find("123456789012345678", 1, true))
+    assert(not detail:find("private-member-payload", 1, true), "event payloads must not be logged")
+
+    local unpacked = {}
+    local ran = events:_run("varargs_probe", function(...)
+      unpacked.count = select("#", ...)
+      unpacked.first, unpacked.middle, unpacked.last = ...
+    end, "first", nil, "last")
+    assert(ran and unpacked.count == 3 and unpacked.first == "first" and unpacked.middle == nil and unpacked.last == "last")
+  end)
+  _G.unpack = old_unpack
+  assert(ok, failure)
+end)
+
 test("community commands register without configurable aliases", function()
   local store, settings = setup()
   local router = Router.new()

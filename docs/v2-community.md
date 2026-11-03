@@ -1,6 +1,6 @@
 # Molly V2 — community settings and events
 
-This document describes the V2 community features currently implemented in this branch. They are additive: existing guild fields such as `prefix`, economy balances and receipts, `modlog`, and `voice_system` remain in their original locations and formats. New modular settings are stored under `data.molly_v2.settings`; AFK records and starboard publication receipts use separate guild-scoped V2 sections. There is no eager migration of existing guild documents.
+This document describes the V2 community features currently implemented in this branch. They are additive: existing guild fields such as `prefix`, economy balances, `modlog`, and `voice_system` remain compatible. New modular settings are stored under `data.molly_v2.settings`; AFK records and starboard publication receipts use separate guild-scoped V2 sections. There is no eager migration of existing guild documents; legacy economy receipts are migrated lazily by the economy ledger as documented in [v2-economy-modes.md](v2-economy-modes.md).
 
 ## Commands
 
@@ -33,7 +33,7 @@ The existing Message Content intent remains separately required for prefix comma
 - Starboard publication records: at most 5,000 per guild. In-memory vote state is limited to 500 messages and 256 tracked voters per message. Publication records are additive under `data.molly_v2.starboard`; vote state is transient.
 - Greeting, action-log, and role settings are stored per guild under `data.molly_v2.settings` and validated before writes.
 
-No V2 module uses a process-wide lock for guild work. Existing economy receipts, Money IDs, legacy ID resolution, and transaction storage are unchanged.
+No V2 module uses a process-wide lock for guild work. Economy ledger receipt retention and the 1,000-row journal rotation are described in [v2-economy-modes.md](v2-economy-modes.md); unrelated community receipts remain in their existing V2 sections.
 
 ## Discord API and safety limits
 
@@ -45,17 +45,4 @@ NSFW starboard safety is based on Discord's channel `nsfw` flag. Attachments are
 
 ## Local verification
 
-Run the full self-contained suite with Lua 5.1:
-
-```sh
-lua5.1 tests/test.lua
-lua5.1 tests/v2.lua
-lua5.1 tests/community.lua
-lua5.1 tests/economy_v2.lua
-lua5.1 tests/sprint.lua
-lua5.1 tests/developer_lifecycle.lua
-lua5.1 tests/economy_commands.lua
-lua5.1 tests/prefix_commands.lua
-```
-
-These tests validate local contracts and mock behavior; they do not prove Discord portal configuration or live REST permissions. No production migration, bot restart, or deployment is part of V2 development.
+See [testing.md](testing.md) for the full CI, Luvit, and SeaWorld integration matrix. The CI-safe suite validates local contracts and mocked REST behavior; it does not prove Discord portal configuration or live REST permissions. No production migration, bot restart, or deployment is part of V2 development.

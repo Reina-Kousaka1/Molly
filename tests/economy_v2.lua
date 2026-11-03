@@ -170,6 +170,56 @@ test("shop purchases are idempotent and commit wallet, inventory, and Money ID t
   assert(inv_ok and not value.items.rose_crown and #store.data["10"].journal == journal_count)
 end)
 
+test("ledger replays compare complete operation fingerprints before changing balances or inventory", function()
+  local isolated = memory_guild_store()
+  isolated.data["30"] = { guild = "30", accounts = {
+    ["20"] = { wallet = 1000, bank = 0 }, ["21"] = { wallet = 0, bank = 0 }, ["99"] = { wallet = 0, bank = 0 },
+  }, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
+    molly_v2 = { schema_version = 1, inventory = { items = { ["20"] = { copper_ore = 3 } }, equipped = {} } } }
+  local service = Ledger.new(isolated, function() return 100000 end)
+  local ok, result = service:change("30", "20", "901", "pay", "5", "21")
+  assert(ok and result.amount == 5 and result.wallet == 995)
+  local journal_count = #isolated.data["30"].journal
+  local function conflict(run)
+    local accounts_before, items_before = {}, clone(isolated.data["30"].molly_v2.inventory.items["20"])
+    for id, account_data in pairs(isolated.data["30"].accounts) do accounts_before[id] = account_data.wallet end
+    local count_before = #isolated.data["30"].journal
+    local accepted, reason = run()
+    assert(not accepted and reason == "replay_conflict")
+    assert(#isolated.data["30"].journal == count_before)
+    for id, wallet in pairs(accounts_before) do assert(isolated.data["30"].accounts[id].wallet == wallet) end
+    for item, quantity in pairs(items_before) do assert(isolated.data["30"].molly_v2.inventory.items["20"][item] == quantity) end
+  end
+  ok, result = service:change("30", "20", "901", "pay", 5, "21")
+  assert(ok and #isolated.data["30"].journal == journal_count, "numeric/string equivalent requests replay")
+  conflict(function() return service:change("30", "20", "901", "pay", "500", "99") end)
+  conflict(function() return service:change("30", "20", "901", "pay", "5", "99") end)
+  conflict(function() return service:change("30", "21", "901", "pay", "5", "99") end)
+  conflict(function() return service:change("30", "20", "901", "pay", "5", "20") end)
+  conflict(function() return service:change("30", "20", "901", "deposit", "5") end)
+
+  ok, result = service:purchase("30", "20", "902", "pickaxe", 100, 1)
+  assert(ok and result.quantity == 1)
+  journal_count = #isolated.data["30"].journal
+  ok, result = service:purchase("30", "20", "902", "pickaxe", 100, 1)
+  assert(ok and #isolated.data["30"].journal == journal_count)
+  conflict(function() return service:purchase("30", "20", "902", "pickaxe", 100, 2) end)
+  conflict(function() return service:purchase("30", "20", "902", "rose_crown", 100, 1) end)
+  conflict(function() return service:purchase("30", "20", "902", "!invalid", 100, 1) end)
+  conflict(function() return service:purchase("30", "20", "902", "pickaxe", 100, 0) end)
+  conflict(function() return service:purchase("30", "20", "902", "pickaxe", 99, 1) end)
+  conflict(function() return service:change("30", "20", "902", "daily") end)
+
+  ok, result = service:sell("30", "20", "903", "copper_ore", 1)
+  assert(ok and result.quantity == 1)
+  journal_count = #isolated.data["30"].journal
+  ok, result = service:sell("30", "20", "903", "copper_ore", 1)
+  assert(ok and #isolated.data["30"].journal == journal_count)
+  conflict(function() return service:sell("30", "20", "903", "copper_ore", 2) end)
+  conflict(function() return service:sell("30", "20", "903", "copper_ore", 1000) end)
+  conflict(function() return service:sell("30", "20", "903", "iron_ore", 1) end)
+end)
+
 test("mining requires a reusable pickaxe, is cooldown-limited, replay-safe, and yields sellable resources", function()
   local ok, result = mining:mine("10", "202", "401")
   assert(not ok and result == "pickaxe_required")
@@ -192,6 +242,125 @@ test("mining requires a reusable pickaxe, is cooldown-limited, replay-safe, and 
   random_values = { 65, 2 }
   ok, result = mining:mine("10", "200", "405")
   assert(ok and result.item_id == "iron_ore" and result.quantity == 2)
+end)
+
+test("journal rotation permits new writes after 1,000 records and survives reload", function()
+  local function persistent_store(initial)
+    local result = { data = initial or {} }
+    function result:run(guild, fn)
+      local data = self.data[guild] or { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+      local ok, value, changed = fn(data)
+      if ok and changed then self.data[guild] = data end
+      return ok, value
+    end
+    return result
+  end
+  local clock, state = 0, persistent_store()
+  local first_id, first_money_id, last_id, last_result
+  local service = Ledger.new(state, function() clock = clock + 86400; return clock end)
+  for index = 1, Ledger.max_journal_records do
+    local request_id = tostring(3000000000 + index)
+    local ok, result = service:change("80", "70", request_id, "daily")
+    assert(ok)
+    if index == 1 then first_id, first_money_id = request_id, result.money_id end
+  end
+  assert(#state.data["80"].journal == Ledger.max_journal_records)
+  local request_id = tostring(3000000000 + Ledger.max_journal_records + 1)
+  local ok, result = service:change("80", "70", request_id, "daily")
+  assert(ok, "the 1,001st ledger operation must succeed")
+  last_id, last_result = request_id, result
+  assert(#state.data["80"].journal == Ledger.max_journal_records)
+  assert(state.data["80"].economy_receipt_count == Ledger.max_journal_records + 1)
+  local found, lookup = service:transaction("80", first_money_id)
+  assert(not found and lookup == "transaction_not_found", "lookup is guaranteed only while the row is retained")
+  found, lookup = service:transaction("80", last_result.money_id)
+  assert(found and lookup.id == "E" .. last_id)
+
+  local reloaded = persistent_store({ ["80"] = clone(state.data["80"]) })
+  local after_restart = Ledger.new(reloaded, function() clock = clock + 86400; return clock end)
+  local journal_count, wallet = #reloaded.data["80"].journal, reloaded.data["80"].accounts["70"].wallet
+  local replayed, replay = after_restart:change("80", "70", last_id, "daily")
+  assert(replayed and replay.wallet == last_result.wallet)
+  assert(#reloaded.data["80"].journal == journal_count and reloaded.data["80"].accounts["70"].wallet == wallet,
+    "persisted retries after process reload cannot duplicate a reward")
+end)
+
+test("economy receipts stay bounded and expired request IDs fail closed after reload", function()
+  local function persistent_store(initial)
+    local result = { data = initial or {} }
+    function result:run(guild, fn)
+      local data = self.data[guild] or { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+      local ok, value, changed = fn(data)
+      if ok and changed then self.data[guild] = data end
+      return ok, value
+    end
+    return result
+  end
+  local clock, state = 0, persistent_store()
+  local first_id, first_money_id, last_id, last_result
+  local ok, result
+  local service = Ledger.new(state, function() clock = clock + 86400; return clock end)
+  for index = 1, Ledger.max_economy_receipts + 1 do
+    local request_id = tostring(4000000000 + index)
+    ok, result = service:change("81", "71", request_id, "daily")
+    assert(ok, "new requests continue through receipt retention")
+    if index == 1 then first_id, first_money_id = request_id, result.money_id end
+    last_id, last_result = request_id, result
+  end
+  local data = state.data["81"]
+  assert(data.economy_receipt_count == Ledger.max_economy_receipts)
+  local retained = 0; for _ in pairs(data.economy_receipts) do retained = retained + 1 end
+  assert(retained == Ledger.max_economy_receipts and data.economy_receipt_watermarks.interaction == first_id)
+  assert(#data.journal == Ledger.max_journal_records)
+
+  local reloaded = persistent_store({ ["81"] = clone(data) })
+  local after_restart = Ledger.new(reloaded, function() clock = clock + 86400; return clock end)
+  local wallet, journal_count = reloaded.data["81"].accounts["71"].wallet, #reloaded.data["81"].journal
+  local ok, reason = after_restart:change("81", "71", first_id, "daily")
+  assert(not ok and reason == "replay_expired", "a pruned ID must never execute again")
+  assert(reloaded.data["81"].accounts["71"].wallet == wallet and #reloaded.data["81"].journal == journal_count)
+  ok, result = after_restart:change("81", "71", last_id, "daily")
+  assert(ok and result.wallet == last_result.wallet and #reloaded.data["81"].journal == journal_count)
+  local found, lookup = after_restart:transaction("81", first_money_id)
+  assert(not found and lookup == "transaction_not_found")
+  found, lookup = after_restart:transaction("81", last_result.money_id)
+  assert(found and lookup.id == "E" .. last_id)
+
+  local new_id = tostring(4000000000 + Ledger.max_economy_receipts + 2)
+  ok = after_restart:change("81", "71", new_id, "daily")
+  assert(ok and reloaded.data["81"].economy_receipt_count == Ledger.max_economy_receipts)
+  assert(#reloaded.data["81"].journal == Ledger.max_journal_records)
+end)
+
+test("economy balances and matching request IDs remain isolated across guilds", function()
+  local isolated = memory_guild_store()
+  local service = Ledger.new(isolated, function() return 200000 end)
+  local first_ok = service:change("90", "70", "900", "daily")
+  local second_ok = service:change("91", "70", "900", "daily")
+  assert(first_ok and second_ok, "the same Discord request ID can independently exist in two guild ledgers")
+  local replayed, result = service:change("90", "70", "900", "daily")
+  assert(replayed and result.wallet == 100)
+  local conflict, reason = service:change("91", "70", "900", "deposit", "all")
+  assert(not conflict and reason == "replay_conflict")
+  local first_balance, a = service:balance("90", "70")
+  local second_balance, b = service:balance("91", "70")
+  assert(first_balance and second_balance and a.wallet == 100 and b.wallet == 100)
+  assert(isolated.data["90"].economy_receipts["interaction:900"]
+    and isolated.data["91"].economy_receipts["interaction:900"])
+  assert(isolated.data["90"] ~= isolated.data["91"])
+end)
+
+test("account creation has no permanent 200-account ceiling", function()
+  local isolated = memory_guild_store()
+  local accounts = {}
+  for index = 1, 200 do accounts[tostring(index)] = { wallet = 0, bank = 0 } end
+  isolated.data["82"] = { guild = "82", accounts = accounts, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  local service = Ledger.new(isolated, function() return 200000 end)
+  local ok, result = service:change("82", "201", "500000", "daily")
+  assert(ok and result.wallet == 100)
+  assert(isolated.data["82"].accounts["201"].wallet == 100)
+  local count = 0; for _ in pairs(isolated.data["82"].accounts) do count = count + 1 end
+  assert(count == 201 and isolated.data["82"].accounts["1"].wallet == 0)
 end)
 
 test("mining rejects invalid and non-finite clock state", function()

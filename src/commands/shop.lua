@@ -76,6 +76,8 @@ function Commands.register(router, shop, settings)
           local messages = { shop_disabled = "The standard coin shop is disabled for this server.",
             insufficient = "You do not have enough coins for that purchase.", capacity = "The shop or economy has reached its storage limit.",
             unknown_item = "That item is not in the server catalog.", virtual_item = "That item is not a virtual Sephora look.",
+            replay_conflict = "This request ID was already used for a different economy action; no new changes were made.",
+            replay_expired = "This request is outside the retained retry window; no new economy action was made.",
             virtual_mode = "That free look is available only while this server uses Virtual Sephora mode.",
             virtual_quantity = "Virtual Sephora looks are selected one at a time.", invalid_amount = "Choose a quantity from 1 to 99.",
             unavailable = "Economy storage is unavailable.", invalid_store = "Economy storage requires administrator attention." }

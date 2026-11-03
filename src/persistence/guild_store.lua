@@ -25,6 +25,7 @@ function Store:run(guild_id, fn)
     return false, session_ok and (session_reason or "capability_unavailable") or "unavailable"
   end
   collection = "molly_g_" .. guild_id
+  local commit_attempted = false
   local function work()
     local found, rows = c:query({ collection = collection, limit = 2 })
     local missing = not found and rows == "not_found"
@@ -56,12 +57,13 @@ function Store:run(guild_id, fn)
       local updated, update = c:update({ collection = collection, id = id, set = { data = data } })
       if not updated or update.updated ~= true then return false, "unavailable" end
     end
-    local committed = c:commit()
-    if not committed then return false, "outcome_unknown" end
+    commit_attempted = true
+    local commit_call_ok, committed = pcall(c.commit, c)
+    if not commit_call_ok or not committed then return false, "outcome_unknown" end
     return true, result
   end
   local ok, success, result = pcall(work)
-  if c.in_transaction then pcall(c.rollback, c) end
+  if not commit_attempted and c.in_transaction then pcall(c.rollback, c) end
   pcall(c.close, c)
   self.busy_guilds[guild_id] = nil
   if not ok then return false, "unavailable" end

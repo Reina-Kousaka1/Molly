@@ -49,12 +49,17 @@ There is no promise of exactly-once delivery across different interactions.
 
 Balances are nonnegative integer coins capped at 1,000,000,000,000 per pocket.
 Current configurable-in-code rewards are daily 100 coins/24h, weekly 500/7d,
-and work 20/1h; a backward clock fails closed. The initial bounded model allows
-200 accounts, 1,000 economy entries, 1,000 moderation cases and 50 notes per
-staff record; the transport's 1 MiB frame limit may be reached earlier. It
-does not prune receipts automatically: capacity errors require a deliberate
-future migration/retention policy. Transactions and staff/case history are
-limited when displayed, and no SeaWorld storage internals are exposed.
+and work 20/1h; a backward clock fails closed. Account records have no
+application-level count cap and are not evicted; the transport's 1 MiB frame
+limit may be reached earlier. The journal rotates at 1,000 records per guild,
+so balances continue to work while older history and Money-ID lookups age out.
+Economy idempotency receipts retain at most 5,000 requests per guild. Numeric
+per-request-type watermarks reject expired IDs rather than allowing a retry to
+repeat an old reward or charge; old replay results are no longer available.
+Unrelated legacy receipts remain readable and other feature receipts are not
+pruned by this economy policy. Moderation is capped at 1,000 cases and staff
+records at 50 notes. Transactions and staff/case history are limited when
+displayed, and no SeaWorld storage internals are exposed.
 
 Music commands are registered in `molly.lua`: `/play`, playback controls,
 queue inspection/reordering, `/nowplaying`, and the persistent `/music-panel`.
@@ -81,8 +86,8 @@ Repeated trigger events do not create extra rooms.
 Presence rotation has 24 local texts, one writer and a 120-second interval;
 it performs no database queries and stops on shutdown.
 
-Run offline checks with `lua tests/test.lua`, `lua tests/sprint.lua`,
-`lua tests/music_voice.lua`, `lua tests/economy_v2.lua`, `lua tests/observability.lua`,
-`./runtime/luvit tests/sprint.lua` and `./runtime/luvit tests/discord_registration.lua`.
-`tests/economy_integration.lua` requires a separately started local SeaWorld
-service and a disposable database; it never selects a production path.
+See [`docs/testing.md`](testing.md) for the checked-in test matrix and exact
+commands. Plain Lua 5.1 suites run without Discord or SeaWorld. The separately
+classified Luvit tests use `tests/run_luvit.sh`; SeaWorld integration checks use
+`tests/run_integration.sh` only with a disposable test service explicitly
+confirmed by the operator.
