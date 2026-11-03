@@ -1,10 +1,12 @@
 local Store = require("src.persistence.guild_store")
+local InventoryData = require("src.economy.inventory_data")
 local Ledger = {}
 Ledger.__index = Ledger
 local MAX = 1000000000000
 local MAX_RECORDS = 1000
 local MAX_ACCOUNTS = 200
 local MAX_HISTORY = 20
+local MINING_COOLDOWN = 30
 local BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 local function base36(decimal)
@@ -63,7 +65,9 @@ local function account(data, id, create)
   return a
 end
 
-function Ledger.new(store, clock) return setmetatable({ store = store, clock = clock or os.time }, Ledger) end
+function Ledger.new(store, clock, random)
+  return setmetatable({ store = store, clock = clock or os.time, random = random or math.random }, Ledger)
+end
 
 function Ledger:balance(guild, user)
   if not Store.valid_id(user) then return false, "invalid_user" end
@@ -140,7 +144,10 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
   return self.store:run(guild, function(data)
     if data.receipts[receipt_key] then
-      local previous = public_record(data.receipts[receipt_key])
+      local receipt = data.receipts[receipt_key]
+      if type(receipt) ~= "table" then return false, "invalid_store" end
+      if receipt.operation then return false, "replay_conflict" end
+      local previous = public_record(receipt)
       previous.money_id = previous.money_id or money_id(record_id)
       return true, previous, false
     end
@@ -187,4 +194,141 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
   end)
 end
 
+-- A shop purchase moves coins, writes the canonical Money-ID journal row,
+-- records its retry receipt, and grants inventory in the same guild transaction.
+function Ledger:purchase(guild, user, interaction, item_id, price, quantity, request_type)
+  if not Store.valid_id(user) or not Store.valid_id(interaction) or not InventoryData.valid_item(item_id) then
+    return false, "invalid_argument"
+  end
+  if type(price) ~= "number" or price % 1 ~= 0 or price < 1 or price > MAX
+    or type(quantity) ~= "number" or quantity % 1 ~= 0 or quantity < 1 or quantity > 99
+    or price > math.floor(MAX / quantity) then return false, "invalid_amount" end
+  request_type = request_type or "interaction"
+  if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
+  local receipt_key = request_type == "message" and ("message:" .. interaction) or interaction
+  local record_id = (request_type == "message" and "EP" or "E") .. interaction
+  local total = price * quantity
+  return self.store:run(guild, function(data)
+    if data.receipts[receipt_key] then
+      local receipt = data.receipts[receipt_key]
+      if type(receipt) ~= "table" then return false, "invalid_store" end
+      if receipt.operation ~= "purchase" or receipt.user ~= user or receipt.item_id ~= item_id or receipt.quantity ~= quantity then
+        return false, "replay_conflict"
+      end
+      local previous = public_record(receipt)
+      previous.money_id = previous.money_id or money_id(record_id)
+      return true, previous, false
+    end
+    if #data.journal >= MAX_RECORDS then return false, "capacity" end
+    local a = account(data, user, true)
+    if not a then return false, "capacity" end
+    if a.wallet < total then return false, "insufficient" end
+    local added, inventory = InventoryData.add(data, user, item_id, quantity)
+    if not added then return false, inventory end
+    local now = self.clock()
+    a.wallet = a.wallet - total
+    local record = { id = record_id, guild = guild, user = user, kind = "purchase",
+      amount = total, counterparty = item_id, timestamp = now, status = "committed" }
+    data.journal[#data.journal + 1] = record
+    local result = { id = record.id, money_id = money_id(record.id), amount = total, wallet = a.wallet,
+      bank = a.bank, operation = "purchase", user = user, item_id = item_id, quantity = quantity }
+    data.receipts[receipt_key] = result
+    return true, result, true
+  end)
+end
+
+function Ledger:sell(guild, user, interaction, item_id, quantity, request_type)
+  local Catalog = require("src.economy.catalog")
+  if not Store.valid_id(user) or not Store.valid_id(interaction) then return false, "invalid_argument" end
+  local item = Catalog.get_resource(item_id)
+  if not item or type(quantity) ~= "number" or quantity % 1 ~= 0 or quantity < 1 or quantity > 99
+    or item.sell_price > math.floor(MAX / quantity) then return false, "invalid_amount" end
+  request_type = request_type or "interaction"
+  if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
+  local receipt_key = request_type == "message" and ("message:" .. interaction) or interaction
+  local record_id = (request_type == "message" and "EP" or "E") .. interaction
+  local total = item.sell_price * quantity
+  return self.store:run(guild, function(data)
+    if data.receipts[receipt_key] then
+      local receipt = data.receipts[receipt_key]
+      if type(receipt) ~= "table" then return false, "invalid_store" end
+      if receipt.operation ~= "sale" or receipt.user ~= user or receipt.item_id ~= item_id or receipt.quantity ~= quantity then
+        return false, "replay_conflict"
+      end
+      local previous = public_record(receipt)
+      previous.money_id = previous.money_id or money_id(record_id)
+      return true, previous, false
+    end
+    if #data.journal >= MAX_RECORDS then return false, "capacity" end
+    local a = account(data, user, true)
+    if not a then return false, "capacity" end
+    if a.wallet + total > MAX then return false, "overflow" end
+    local removed, inventory = InventoryData.remove(data, user, item_id, quantity)
+    if not removed then return false, inventory end
+    local now = self.clock()
+    a.wallet = a.wallet + total
+    local record = { id = record_id, guild = guild, user = user, kind = "sale",
+      amount = total, counterparty = item_id, timestamp = now, status = "committed" }
+    data.journal[#data.journal + 1] = record
+    local result = { id = record.id, money_id = money_id(record.id), amount = total, wallet = a.wallet,
+      bank = a.bank, operation = "sale", user = user, item_id = item_id,
+      quantity = quantity, price_each = item.sell_price }
+    data.receipts[receipt_key] = result
+    return true, result, true
+  end)
+end
+
+function Ledger:mine(guild, user, interaction, request_type)
+  if not Store.valid_id(user) or not Store.valid_id(interaction) then return false, "invalid_argument" end
+  request_type = request_type or "interaction"
+  if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
+  local receipt_key = request_type == "message" and ("message:" .. interaction) or interaction
+  local record_id = (request_type == "message" and "EP" or "E") .. interaction
+  return self.store:run(guild, function(data)
+    if data.receipts[receipt_key] then
+      local receipt = data.receipts[receipt_key]
+      if type(receipt) ~= "table" then return false, "invalid_store" end
+      if receipt.operation ~= "mine" or receipt.user ~= user then return false, "replay_conflict" end
+      local previous = public_record(receipt)
+      previous.money_id = previous.money_id or money_id(record_id)
+      return true, previous, false
+    end
+    if #data.journal >= MAX_RECORDS then return false, "capacity" end
+    local a = account(data, user, true)
+    if not a then return false, "capacity" end
+    local now = self.clock()
+    local last = a.last_mine
+    if last == nil then last = 0 end
+    if type(now) ~= "number" or now ~= now or now == math.huge or now == -math.huge or now < 0
+      or type(last) ~= "number" or last ~= last or last == math.huge or last == -math.huge or last < 0 or now < last then
+      return false, "invalid_store"
+    end
+    if last > 0 and now - last < MINING_COOLDOWN then return false, "cooldown" end
+    local inventory, reason = InventoryData.get(data, user)
+    if not inventory then return false, reason end
+    if (inventory.items.pickaxe or 0) < 1 then return false, "pickaxe_required" end
+    local called, roll = pcall(self.random, 1, 100)
+    if not called or type(roll) ~= "number" or roll % 1 ~= 0 or roll < 1 or roll > 100 then
+      return false, "random_unavailable"
+    end
+    local item_id = roll <= 60 and "copper_ore" or (roll <= 90 and "iron_ore" or "crystal_shard")
+    called, roll = pcall(self.random, 1, item_id == "crystal_shard" and 1 or 3)
+    if not called or type(roll) ~= "number" or roll % 1 ~= 0 or roll < 1
+      or roll > (item_id == "crystal_shard" and 1 or 3) then return false, "random_unavailable" end
+    local quantity = roll
+    local added, add_reason = InventoryData.add(data, user, item_id, quantity)
+    if not added then return false, add_reason end
+    a.last_mine = now
+    local record = { id = record_id, guild = guild, user = user, kind = "mine",
+      amount = 0, counterparty = item_id, timestamp = now, status = "committed" }
+    data.journal[#data.journal + 1] = record
+    local result = { id = record.id, money_id = money_id(record.id), amount = 0, wallet = a.wallet,
+      bank = a.bank, operation = "mine", user = user, item_id = item_id,
+      quantity = quantity, cooldown_seconds = MINING_COOLDOWN }
+    data.receipts[receipt_key] = result
+    return true, result, true
+  end)
+end
+
+Ledger.mining_cooldown = MINING_COOLDOWN
 return Ledger

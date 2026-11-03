@@ -1,0 +1,112 @@
+local Store = require("src.persistence.guild_store")
+local Util = require("src.commands.community_util")
+local Catalog = require("src.economy.catalog")
+local Money = require("src.economy.money_format")
+
+local Commands = {}
+
+local function money(settings, guild, amount)
+  return Money.formatter(settings, guild)(amount)
+end
+
+function Commands.register(router, shop, settings)
+  local buy_choices, resource_choices = {}, {}
+  for _, item in ipairs(Catalog.list()) do buy_choices[#buy_choices + 1] = { name = item.name .. " — " .. item.price .. " coins", value = item.id } end
+  for _, item in ipairs(Catalog.resources()) do resource_choices[#resource_choices + 1] = { name = item.name .. " — sell for " .. item.sell_price .. " coins", value = item.id } end
+  for _, item in ipairs(shop:lookbook()) do buy_choices[#buy_choices + 1] = { name = item.name .. " — free virtual look", value = item.id } end
+
+  local quantity = { type = 4, name = "quantity", description = "Whole item quantity", required = false, min_value = 1, max_value = 99 }
+  router:register({
+    name = "shop", category = "Economy", description = "Browse the server shop and manage virtual purchases",
+    options = {
+      { type = 1, name = "status", description = "Show shop and mode status" },
+      { type = 1, name = "catalog", description = "Browse available virtual items" },
+      { type = 1, name = "buy", description = "Buy a standard item or try a virtual Sephora look", options = {
+        { type = 3, name = "item", description = "Catalog item", required = true, choices = buy_choices }, quantity,
+      } },
+      { type = 1, name = "sell", description = "Sell mined resources", options = {
+        { type = 3, name = "item", description = "Mined resource", required = true, choices = resource_choices }, quantity,
+      } },
+      { type = 1, name = "enable", description = "Enable this server's coin shop and resource exchange" },
+      { type = 1, name = "disable", description = "Disable the coin shop and resource exchange" },
+    },
+    execute = function(ctx)
+      local guild, user = ctx.guild and ctx.guild.id, ctx.author and ctx.author.id
+      if not Store.valid_id(guild) or not Store.valid_id(user) then ctx:respond("This command requires a server member.", { ephemeral = true }); return end
+      if not Util.defer(ctx) then return end
+      local action = ctx.molly_subcommand
+      if action == "status" then
+        local ok, value = shop:status(guild)
+        if not ok then Util.reply(ctx, "Shop settings are unavailable."); return end
+        if value.virtual then
+          Util.reply(ctx, "Virtual Sephora mode is active. Its styles are free and fictional; no coins are spent. The standard coin shop is " .. (value.ledger_enabled and "enabled" or "disabled") .. ".")
+        else
+          Util.reply(ctx, "Standard mode. Coin shop and resource exchange are " .. (value.enabled and "enabled" or "disabled") .. ".")
+        end
+      elseif action == "catalog" then
+        local ok, result = shop:list(guild)
+        if not ok then
+          Util.reply(ctx, result == "shop_disabled" and "The standard coin shop is disabled for this server. A manager can run `/shop enable`."
+            or "The shop catalog is unavailable.")
+          return
+        end
+        local lines = {}
+        for _, item in ipairs(result.items) do
+          local price = item.price and (tostring(item.price) .. " coins") or "free"
+          lines[#lines + 1] = string.format("%s (`%s`) — %s: %s", Util.safe(item.name, 80), Util.safe(item.id, 32), price, Util.safe(item.description, 180))
+        end
+        if result.mode == "standard" then
+          for _, item in ipairs(Catalog.resources()) do
+            lines[#lines + 1] = string.format("Sell %s (`%s`) — %d coins each", item.name, item.id, item.sell_price)
+          end
+          lines[#lines + 1] = "A pickaxe is required to mine; resources are sold through `/shop sell`."
+        else
+          lines[#lines + 1] = "These fictional styles can be tried for free; no coins or payment are involved."
+        end
+        Util.reply(ctx, table.concat(lines, "\n"))
+      elseif action == "enable" or action == "disable" then
+        if not Util.is_manager(ctx) then Util.reply(ctx, "You need Manage Server to configure the shop."); return end
+        local ok = shop:set_enabled(guild, action == "enable")
+        Util.reply(ctx, ok and (action == "enable" and "The standard coin shop and resource exchange are enabled." or "The standard coin shop and resource exchange are disabled.")
+          or "Shop settings could not be saved.")
+      elseif action == "buy" then
+        local item, count = Util.arg(ctx, "item"), Util.arg(ctx, "quantity") or 1
+        local ok, result = shop:buy(guild, user, ctx.request_id or ctx.interaction_id, item, count, ctx.request_type)
+        if not ok then
+          local messages = { shop_disabled = "The standard coin shop is disabled for this server.",
+            insufficient = "You do not have enough coins for that purchase.", capacity = "The shop or economy has reached its storage limit.",
+            unknown_item = "That item is not in the server catalog.", virtual_item = "That item is not a virtual Sephora look.",
+            virtual_mode = "That free look is available only while this server uses Virtual Sephora mode.",
+            virtual_quantity = "Virtual Sephora looks are selected one at a time.", invalid_amount = "Choose a quantity from 1 to 99.",
+            unavailable = "Economy storage is unavailable.", invalid_store = "Economy storage requires administrator attention." }
+          Util.reply(ctx, messages[result] or "The purchase could not be completed.")
+          return
+        end
+        if result.mode == "sephora" then
+          Util.reply(ctx, "Virtual look selected: `" .. Util.safe(result.item_id, 32) .. "`. No coins or payment were used.")
+        else
+          Util.reply(ctx, string.format("Purchased %d × %s for %s. Wallet: %s. Money ID: `%s`.", result.quantity,
+            Util.safe(result.name, 80), money(settings, guild, result.charged), money(settings, guild, result.wallet), Util.safe(result.money_id, 24)))
+        end
+      elseif action == "sell" then
+        local ok, result = shop:sell(guild, user, ctx.request_id or ctx.interaction_id,
+          Util.arg(ctx, "item"), Util.arg(ctx, "quantity") or 1, ctx.request_type)
+        if not ok then
+          local messages = { shop_disabled = "The standard resource exchange is disabled for this server.",
+            virtual_mode = "Mining resources cannot be sold in virtual Sephora mode.", not_owned = "You do not own that many resources.",
+            unknown_item = "That resource cannot be sold.", invalid_amount = "Choose a quantity from 1 to 99.",
+            overflow = "That sale would exceed the wallet limit.", unavailable = "Economy storage is unavailable.",
+            invalid_store = "Economy storage requires administrator attention." }
+          Util.reply(ctx, messages[result] or "The sale could not be completed.")
+          return
+        end
+        Util.reply(ctx, string.format("Sold %d × %s for %s. Wallet: %s. Money ID: `%s`.", result.quantity,
+          Util.safe(result.name, 80), money(settings, guild, result.charged), money(settings, guild, result.wallet), Util.safe(result.money_id, 24)))
+      else
+        Util.reply(ctx, "Choose status, catalog, buy, sell, enable, or disable.")
+      end
+    end,
+  })
+end
+
+return Commands

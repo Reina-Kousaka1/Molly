@@ -89,6 +89,40 @@ function Admin.register(router, options)
     return private(ctx, table.concat(lines, "\n"))
   end })
 
+  register({ name = "observe", category = "Developer", description = "Inspect bounded, non-sensitive Molly runtime metrics", options = {
+    { name = "metrics", description = "Show command call counts and response timings", type = 1 },
+    { name = "runtime", description = "Show runtime version and uptime", type = 1 },
+    { name = "seaworld", description = "Show persistence service health", type = 1 },
+  }, execute = function(ctx)
+    if not owner_only(owners, ctx) then return private(ctx, "This command is restricted to configured Molly developers.") end
+    if not Response.defer(ctx, { ephemeral = true }) then return end
+    local action = ctx.molly_subcommand
+    local ok, result
+    if action == "metrics" then ok, result = developer:observability()
+    elseif action == "runtime" then ok, result = developer:runtime()
+    elseif action == "seaworld" then ok, result = developer:seaworld_status()
+    else return private(ctx, "Choose metrics, runtime, or seaworld.") end
+    if not ok then return private(ctx, "Observability data is unavailable: " .. safe(result)) end
+    if action == "metrics" then
+      local totals = result.totals or {}
+      local lines = { string.format("Command metrics · process uptime %ds", math.floor((result.uptime_ms or 0) / 1000)),
+        string.format("Calls: %d · succeeded: %d · denied: %d · failed: %d · total handler time: %dms",
+          totals.calls or 0, totals.succeeded or 0, totals.denied or 0, totals.failed or 0, totals.duration_ms or 0) }
+      local limit = math.min(12, #(result.commands or {}))
+      for index = 1, limit do
+        local row = result.commands[index]
+        local value = row.metrics or {}
+        lines[#lines + 1] = string.format("%s: %d calls · %d denied · %d failed · max %dms",
+          safe(row.name), value.calls or 0, value.denied or 0, value.failed or 0, value.max_duration_ms or 0)
+      end
+      if #(result.commands or {}) > limit then lines[#lines + 1] = "Additional command counters omitted." end
+      return private(ctx, table.concat(lines, "\n"))
+    elseif action == "runtime" then
+      return private(ctx, string.format("Lua: %s\nUptime: %ss", safe(result.lua), safe(result.uptime)))
+    end
+    return private(ctx, string.format("SeaWorld: %s\nDetail: %s\nAPI: %s", safe(result.status), safe(result.detail), safe(result.api_version)))
+  end })
+
   local function lifecycle_command(name)
     register({ name = name, category = "Developer", description = name == "shutdown" and "Shut Molly down cleanly" or (name == "restart" and "Restart Molly cleanly" or "Request a controlled Molly update"),
       options = { { name = "reason", description = "Optional reason", type = 3, required = false, max_length = 200 } }, execute = function(ctx)

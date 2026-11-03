@@ -25,7 +25,7 @@ local log_events = {
 }
 
 Schema.defaults = {
-  guild = {},
+  guild = { mode = "standard" },
   welcome = {
     enabled = false, channel_id = "", message = "Welcome {mention} to {server}!",
     embed = { enabled = false, title = "", description = "" },
@@ -44,9 +44,8 @@ Schema.defaults = {
     enabled = false, channel_id = "", emoji = "⭐", threshold = 3,
     ignored_channels = {},
   },
-  content = { mature_enabled = false },
-  shop = { enabled = true },
-  sephora = { enabled = false },
+  content = { mature_enabled = false, mature_channels = {} },
+  shop = { enabled = false },
 }
 
 Schema.log_events = log_events
@@ -104,13 +103,21 @@ function Schema.normalize(name, saved)
       seen[id] = true
     end
   elseif name == "content" then
-    if type(result.mature_enabled) ~= "boolean" then return nil, "invalid_setting" end
+    if type(result.mature_enabled) ~= "boolean" or type(result.mature_channels) ~= "table"
+      or #result.mature_channels > 10 or (result.mature_enabled and #result.mature_channels == 0) then
+      return nil, "invalid_setting"
+    end
+    local seen = {}
+    for _, id in ipairs(result.mature_channels) do
+      if not valid_id(id, false) or seen[id] then return nil, "invalid_setting" end
+      seen[id] = true
+    end
   elseif name == "shop" then
     if type(result.enabled) ~= "boolean" then return nil, "invalid_setting" end
-  elseif name == "sephora" then
-    if type(result.enabled) ~= "boolean" then return nil, "invalid_setting" end
   elseif name == "guild" then
-    if type(result) ~= "table" then return nil, "invalid_setting" end
+    if type(result.mode) ~= "string" or (result.mode ~= "standard" and result.mode ~= "sephora") then
+      return nil, "invalid_setting"
+    end
   end
 
   return result

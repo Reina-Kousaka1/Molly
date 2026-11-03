@@ -56,12 +56,33 @@ does not prune receipts automatically: capacity errors require a deliberate
 future migration/retention policy. Transactions and staff/case history are
 limited when displayed, and no SeaWorld storage internals are exposed.
 
-Music commands remain unregistered: the existing Lavalink adapter can check a
-v4 endpoint but does not implement playback or the Discord voice lifecycle.
+Music commands are registered in `molly.lua`: `/play`, playback controls,
+queue inspection/reordering, `/nowplaying`, and the persistent `/music-panel`.
+Music sessions are isolated by guild, require a verified Discord voice handshake,
+cap active sessions at 500, upcoming tracks at 50 (25 added per request, with at
+most 100 inspected), and normalize track metadata. Gateway callbacks and panel
+configuration caches have hard size limits; voice handshake events coalesce to
+the latest state, and saturated Lavalink callback queues trigger bounded
+playback recovery. The music panel only recreates a missing message after a
+confirmed Discord 404; a permission or transport failure does not create a
+duplicate. Playback still requires a configured and
+reachable Lavalink v4 service, and the deployment's `discord.lua` voice/REST
+contract must be verified before rollout.
+
+`/voice` configures Join-to-Create rooms and owner controls. It verifies a voice
+trigger inside a same-guild category, stores only rooms Molly created, caps
+those temporary rooms at 100 per guild, and deletes an empty room only when
+Discord confirms the REST operation. Runtime voice tracking is capped at 500
+guilds and 5,000 active members per guild; pending callbacks and move-suppression
+records are bounded. If a membership snapshot overflows or a callback/move
+buffer fills, cleanup fails closed until a fresh complete snapshot is received.
+Repeated trigger events do not create extra rooms.
+
 Presence rotation has 24 local texts, one writer and a 120-second interval;
 it performs no database queries and stops on shutdown.
 
 Run offline checks with `lua tests/test.lua`, `lua tests/sprint.lua`,
+`lua tests/music_voice.lua`, `lua tests/economy_v2.lua`, `lua tests/observability.lua`,
 `./runtime/luvit tests/sprint.lua` and `./runtime/luvit tests/discord_registration.lua`.
 `tests/economy_integration.lua` requires a separately started local SeaWorld
 service and a disposable database; it never selects a production path.

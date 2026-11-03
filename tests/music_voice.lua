@@ -54,6 +54,99 @@ test("music playback queues until the Discord voice handshake, then starts in th
   equal(adapter.calls[1].payload.voice.channelId, "200")
   equal(adapter.calls[2].payload.track.encoded, "enc-one")
   equal(adapter.calls[2].payload.volume, 1000)
+  manager:on_voice_state({ user_id = "999", guild_id = "100", channel_id = nil })
+  assert(manager:state("100").voice_channel_id == nil and manager:state("100").current == nil)
+  equal(manager:state("100").queue[1].encoded, "enc-one")
+  equal(#manager:state("100").queue, 2)
+end)
+
+test("music queues are bounded, metadata is normalized, and disconnected full queues can reconnect", function()
+  local adapter, joins = music_adapter(), {}
+  adapter.source_tracks = {}
+  for index = 1, 30 do
+    adapter.source_tracks[index] = { encoded = "encoded-" .. index, info = {
+      title = "Track " .. index, author = "Artist", uri = "http://unsafe.invalid/track", length = 100000,
+      description = string.rep("x", 1000),
+    } }
+  end
+  function adapter:resolve() return true, self.source_tracks end
+  local manager = Manager.new(adapter)
+  manager:set_discord_client({ voice_state_update = function(_, guild, channel)
+    joins[#joins + 1] = { guild, channel }; return true
+  end }, "999")
+  local ok, reason = manager:play("100", "200", "   ", "300")
+  assert(not ok and reason == "invalid_query")
+  local queued, result = manager:play("100", "200", "playlist", "300")
+  assert(queued and result.count == Manager.max_tracks_per_request and result.omitted_count == 5)
+  assert(#manager:state("100").queue == Manager.max_tracks_per_request)
+  assert(manager:state("100").queue[1].info.uri == nil and manager:state("100").queue[1].info.description == nil)
+  manager:on_voice_state({ user_id = "999", guild_id = "100", channel_id = "200", session_id = "s1" })
+  manager:on_voice_server({ guild_id = "100", endpoint = "voice.example", token = "t1" })
+  queued, result = manager:play("100", "200", "playlist", "300")
+  assert(queued and result.count == Manager.max_tracks_per_request)
+  queued, result = manager:play("100", "200", "playlist", "300")
+  assert(queued and result.count == 1 and result.omitted_count == 29)
+  assert(#manager:state("100").queue == Manager.max_queue)
+  local full, full_reason = manager:play("100", "200", "playlist", "300")
+  assert(not full and full_reason == "queue_full")
+  manager:on_voice_state({ user_id = "999", guild_id = "100", channel_id = nil })
+  assert(manager:state("100").voice_channel_id == nil and not manager:state("100").voice_ready)
+  local reconnect, reconnect_reason = manager:play("100", "201", "playlist", "300")
+  assert(not reconnect and reconnect_reason == "queue_full_reconnecting" and #joins == 2)
+  manager:on_voice_state({ user_id = "999", guild_id = "100", channel_id = "201", session_id = "s2" })
+  manager:on_voice_server({ guild_id = "100", endpoint = "voice.example", token = "t2" })
+  assert(manager:state("100").voice_ready and manager:state("100").current ~= nil)
+  assert(#manager:state("100").queue == Manager.max_queue - 1)
+end)
+
+test("music sessions and queued gateway callbacks have hard cardinality limits", function()
+  local manager = Manager.new(music_adapter())
+  for index = 1, Manager.max_guilds do assert(manager:state(tostring(index), true)) end
+  assert(manager:state(tostring(Manager.max_guilds + 1), true) == nil)
+  local state = manager:state("1", false)
+  state.lock = true
+  for index = 1, Manager.max_pending_events do
+    assert(manager:on_lavalink_event({ op = "playerUpdate", type = "playerUpdate", guildId = "1", state = { position = index } }))
+  end
+  local ok, reason = manager:on_lavalink_event({ op = "playerUpdate", type = "playerUpdate", guildId = "1", state = { position = 99 } })
+  assert(not ok and reason == "busy" and #state.pending_events == Manager.max_pending_events)
+  assert(state.pending_recovery and state.pending_recovery.replay, "overflow must request bounded track recovery")
+  manager:_unlock(state, "1")
+  assert(state.position == Manager.max_pending_events and #state.pending_events == 0 and state.pending_recovery == nil)
+
+  local voice_state = manager:state("2", true)
+  manager:set_discord_client({ voice_state_update = function() return true end }, "999")
+  voice_state.lock = true
+  for index = 1, Manager.max_pending_events do
+    assert(manager:on_voice_state({ user_id = "999", guild_id = "2", channel_id = "200", session_id = "s" .. index }))
+  end
+  assert(manager:on_voice_server({ guild_id = "2", endpoint = "voice.example", token = "latest" }))
+  assert(#voice_state.pending_voice <= 2, "voice handshake callbacks should coalesce to their latest bounded state")
+  manager:_unlock(voice_state, "2")
+  assert(voice_state.voice_ready and voice_state.voice_server.token == "latest")
+end)
+
+test("music adapter failures release session locks and nullable voice endpoints clear stale state", function()
+  local adapter = music_adapter()
+  local manager = Manager.new(adapter)
+  manager:set_discord_client({ voice_state_update = function() return true end }, "999")
+  adapter.resolve = function() error("adapter offline") end
+  local ok, reason = manager:play("100", "200", "query", "300")
+  local failed_state = manager:state("100")
+  assert(not ok and reason == "lavalink_unavailable" and (not failed_state or not failed_state.lock))
+  assert(manager:state("100") == nil, "failed empty requests must not consume a music session slot")
+  assert(manager:on_voice_state({ user_id = "999", guild_id = "101", channel_id = "200", session_id = "s0" }))
+  assert(manager:on_voice_server({ guild_id = "101", endpoint = "voice.example", token = "t0" }))
+  assert(manager:state("101") == nil, "unsolicited voice events must not allocate music sessions")
+  adapter.resolve = function(self) return true, { self.source_tracks[1] } end
+  assert(manager:play("100", "200", "query", "300"))
+  manager:on_voice_state({ user_id = "999", guild_id = "100", channel_id = "200", session_id = "s1" })
+  manager:on_voice_server({ guild_id = "100", endpoint = "voice.example", token = "t1" })
+  assert(manager:state("100").voice_ready)
+  assert(manager:on_voice_server({ guild_id = "100", endpoint = nil }))
+  assert(not manager:state("100").voice_ready and manager:state("100").voice_server == nil)
+  assert(manager:on_voice_server({ guild_id = "100", endpoint = "voice.example", token = "t2" }))
+  assert(manager:state("100").voice_ready)
 end)
 
 test("music state is guild isolated and controls validate and update state", function()
@@ -149,6 +242,8 @@ test("Join-to-Create makes a persisted room, moves the user, transfers ownership
   dynamic:on_voice_state({ guild_id = "100", user_id = "300", channel_id = "200" })
   equal(#rest.created, 1); equal(#rest.moved, 1)
   local room = rest.created[1].id
+  dynamic:on_voice_state({ guild_id = "100", user_id = "300", channel_id = "200" })
+  equal(#rest.created, 1, "duplicate trigger events must not create another room")
   equal(rest.created[1].parent_id, "201")
   equal(rest.moved[1][3], room)
   equal(store.data["100"].voice_system.temporary[room].owner_id, "300")
@@ -164,6 +259,85 @@ test("Join-to-Create makes a persisted room, moves the user, transfers ownership
   assert(store.data["100"].voice_system.temporary[room] == nil)
   assert(rest.channels[room] == nil)
   equal(cleanups, 1)
+end)
+
+test("temporary voice rooms and pending state events have hard resource bounds and fail closed", function()
+  local store, rest = mock_store(), mock_rest()
+  seed_trigger_category(rest)
+  local dynamic = Dynamic.new(store, { rest = rest, bot_id = "999" })
+  local temporary = {}
+  for index = 1, Dynamic.max_temp_rooms do temporary[tostring(600 + index)] = { owner_id = "300" } end
+  dynamic.configurations["100"] = { trigger_channel_id = "200", temporary = temporary }
+  dynamic.temporary["100"] = temporary
+  local ok, reason = dynamic:_create_for("100", "301")
+  assert(not ok and reason == "room_limit" and #rest.created == 0)
+  local too_many = {}
+  for index = 1, Dynamic.max_temp_rooms + 1 do too_many[tostring(900 + index)] = { owner_id = "300" } end
+  assert(not dynamic:_save_temporary("100", too_many))
+
+  dynamic.busy["100"] = true
+  for index = 1, Dynamic.max_pending_events do
+    assert(dynamic:on_voice_state({ guild_id = "100", user_id = tostring(1000 + index), channel_id = "200" }))
+  end
+  ok, reason = dynamic:on_voice_state({ guild_id = "100", user_id = "1200", channel_id = "200" })
+  assert(not ok and reason == "busy" and #dynamic.pending["100"] == Dynamic.max_pending_events)
+  assert(dynamic.membership_incomplete["100"], "dropped voice events must disable destructive cleanup")
+
+  local move_dynamic = Dynamic.new(store, { rest = rest, bot_id = "999" })
+  move_dynamic.configurations["100"] = { trigger_channel_id = "200", temporary = {} }
+  move_dynamic.temporary["100"] = {}
+  move_dynamic.memberships["100"] = { ["301"] = "200" }
+  move_dynamic.members["100"] = { ["200"] = { ["301"] = false } }
+  move_dynamic.membership_counts["100"] = 1
+  move_dynamic.membership_incomplete["100"] = false
+  move_dynamic.pending_moves["100"] = {}
+  for index = 1, Dynamic.max_pending_moves do
+    move_dynamic.pending_moves["100"][tostring(10000 + index)] = { from_channel = "200", to_channel = "600", expires = os.time() + 10 }
+  end
+  local moved, room = move_dynamic:_create_for("100", "301")
+  assert(moved and room and move_dynamic.membership_incomplete["100"],
+    "move-suppression overflow must fail closed rather than evict a live suppression")
+  assert(move_dynamic.pending_moves["100"]["301"] == nil)
+
+  local without_rest = Dynamic.new(mock_store())
+  without_rest.temporary["100"] = { ["600"] = { owner_id = "300" } }
+  without_rest.members["100"] = { ["600"] = {} }
+  assert(not without_rest:_delete_if_empty("100", "600"), "missing REST must not discard an orphaned room record")
+  assert(without_rest.temporary["100"]["600"] ~= nil)
+
+  local no_confirmation = Dynamic.new(mock_store(), { rest = {
+    delete_channel = function() return nil end,
+  } })
+  no_confirmation.temporary["100"] = { ["601"] = { owner_id = "300" } }
+  no_confirmation.members["100"] = { ["601"] = {} }
+  assert(not no_confirmation:_delete_if_empty("100", "601"), "nil is not proof Discord deleted the room")
+  assert(no_confirmation.temporary["100"]["601"] ~= nil)
+end)
+
+test("dynamic voice guild and member caches are bounded and incomplete membership fails closed", function()
+  local store, rest = mock_store(), mock_rest()
+  store.data["100"] = { guild = "100", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
+    voice_system = { temporary = { ["600"] = { owner_id = "300" } } } }
+  rest.channels["600"] = { id = "600", guild_id = "100", type = 2 }
+  rest.channels["601"] = { id = "601", guild_id = "100", type = 2 }
+  local voices = {}
+  for index = 1, Dynamic.max_tracked_members + 1 do
+    voices[index] = { user_id = tostring(10000 + index), channel_id = "601" }
+  end
+  local dynamic = Dynamic.new(store, { rest = rest })
+  assert(dynamic:on_guild_create({ id = "100", channels = { { id = "600", type = 2 }, { id = "601", type = 2 } }, voice_states = voices }))
+  assert(dynamic.membership_incomplete["100"] and dynamic.membership_counts["100"] == Dynamic.max_tracked_members)
+  assert(rest.channels["600"] ~= nil and store.data["100"].voice_system.temporary["600"] ~= nil)
+  local ok, reason = dynamic:on_voice_state({ guild_id = "100", user_id = "999999", channel_id = "200" })
+  assert(not ok and reason == "capacity" and #rest.created == 0)
+
+  local bounded = Dynamic.new(mock_store())
+  for index = 1, Dynamic.max_tracked_guilds do
+    assert(bounded:on_guild_create({ id = tostring(index), channels = {}, voice_states = {} }))
+  end
+  assert(not bounded:on_guild_create({ id = tostring(Dynamic.max_tracked_guilds + 1), channels = {}, voice_states = {} }))
+  local tracked = 0; for _ in pairs(bounded.memberships) do tracked = tracked + 1 end
+  equal(tracked, Dynamic.max_tracked_guilds)
 end)
 
 test("temporary voice permissions preserve other overwrite bits and enforce owner access", function()
@@ -254,6 +428,7 @@ test("music panel persists one message, reuses it, and recreates only a confirme
     if rest.not_found then error({ status_code = 404, code = 10008 }) end
     return { id = message, channel_id = channel, payload = payload }
   end
+  rest.get_channel = function(_, id) return { id = id, guild_id = "100", type = 0 } end
   rest.get_message = function(_, channel, message) return { id = message, channel_id = channel } end
   local panel = Panel.new(store, { bot = { rest = rest } })
   local ok = panel:configure("100", "200")
@@ -264,6 +439,14 @@ test("music panel persists one message, reuses it, and recreates only a confirme
   rest.not_found = true
   assert(panel:refresh("100", nil, true)); equal(sends, 2)
   assert(store.data["100"].music_panel.message_id ~= old_id)
+end)
+
+test("music panel guild cache has a hard size limit", function()
+  local panel = Panel.new(mock_store(), { clock = function() return 1 end })
+  for index = 1, Panel.max_cached_guilds + 1 do assert(panel:_read(tostring(index))) end
+  local cached = 0
+  for _ in pairs(panel.cache) do cached = cached + 1 end
+  equal(cached, Panel.max_cached_guilds)
 end)
 
 test("panel controls require the caller to share Molly's voice channel", function()

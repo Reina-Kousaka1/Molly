@@ -15,7 +15,7 @@ All settings below are per server. Configuration commands require **Manage Serve
 - `/selfroles list|join|leave|allow|disallow` provides a server allowlist. Molly verifies that the role is not `@everyone`, is not managed, does not carry powerful management/moderation permissions, and is below both the bot's role and (for configuration) the acting manager's highest role. The bot must have **Manage Roles**. Users may remove a previously allowed role even after the allowlist entry is removed.
 - `/delete count:<1–100>` purges recent messages from the current text channel. The fixed `.d <count>` alias preserves the invoking message and accepts up to 99 other messages. Older messages, cross-guild channels, and unverifiable bot permissions fail closed; the command does not copy or log message contents.
 - `/hackban` requires the explicit slash confirmation option. The fixed `.hb confirm <user_id> <reason>` alias requires the literal confirmation word. Both paths retain the pending-case and post-ban verification flow; a repeated message/interaction receipt does not dispatch a second ban.
-- `/starboard show|enable|disable|channel|emoji|threshold|ignore|unignore` configures a reaction-based starboard. Thresholds are bounded to 1–100. Only text is copied; attachments are not mirrored. If the source channel is marked NSFW, the destination must also be marked NSFW. The starboard destination itself is not enabled by default.
+- `/starboard show|enable|disable|channel|emoji|threshold|ignore|unignore` configures a reaction-based starboard. Thresholds are bounded to 1–100. Only text is copied; attachments are not mirrored. If the source channel is marked NSFW, the destination must also be marked NSFW and must be allowlisted by the separately default-off `/content` policy. The starboard destination itself is not enabled by default. See [v2-economy-modes.md](v2-economy-modes.md) for the channel allowlist, user opt-in, and classifier limitation.
 
 ## Privileged member intent
 
@@ -51,6 +51,7 @@ Run the full self-contained suite with Lua 5.1:
 lua5.1 tests/test.lua
 lua5.1 tests/v2.lua
 lua5.1 tests/community.lua
+lua5.1 tests/economy_v2.lua
 lua5.1 tests/sprint.lua
 lua5.1 tests/developer_lifecycle.lua
 lua5.1 tests/economy_commands.lua

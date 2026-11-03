@@ -31,6 +31,9 @@ jobs:
           lua5.1 tests/developer_lifecycle.lua
           lua5.1 tests/v2.lua
           lua5.1 tests/community.lua
+          lua5.1 tests/economy_v2.lua
+          lua5.1 tests/observability.lua
+          lua5.1 tests/music_voice.lua
           lua5.1 tests/moderation_v2.lua
           lua5.1 tests/sprint.lua
 

@@ -7,6 +7,7 @@ local Greetings = require("src.community.greetings")
 local ActionLog = require("src.community.action_log")
 local SelfRoles = require("src.community.self_roles")
 local Starboard = require("src.community.starboard")
+local ContentPolicy = require("src.content.policy")
 local CommunityEvents = require("src.community.events")
 local Permissions = require("src.discord.permissions")
 local Router = require("src.commands.router")
@@ -235,6 +236,37 @@ test("starboard blocks NSFW source channels from normal destinations", function(
   local starboard = Starboard.new(store, settings, { rest = rest })
   local ok, reason = starboard:on_reaction(reaction("1", "100", "201", "10"), true)
   assert(not ok and reason == "channel_safety_check_failed" and sent == 0)
+  rest.get_channel = function(_, id) return { id = id, guild_id = "1", nsfw = id == "100" or id == "500" } end
+  ok, reason = starboard:on_reaction(reaction("1", "100", "202", "11"), true)
+  assert(not ok and reason == "channel_safety_check_failed" and sent == 0,
+    "NSFW-to-NSFW mirroring also requires the explicit content policy")
+end)
+
+test("NSFW starboard mirroring needs an explicitly enabled mature-content target", function()
+  local store, settings = setup()
+  local sent = {}
+  local rest = {
+    get_message = function(_, channel, id)
+      return { id = id, channel_id = channel, guild_id = "1", author = { id = "50" }, content = "mature theme",
+        reactions = { { emoji = { name = "⭐" }, count = 1 } }
+      }
+    end,
+    get_channel = function(_, id)
+      return { id = id, guild_id = "1", type = 0, nsfw = id == "100" or id == "500" }
+    end,
+    send_message = function(_, channel, payload) sent[#sent + 1] = { channel = channel, payload = payload }; return { id = tostring(800 + #sent) } end,
+  }
+  assert(settings:update_domain("1", "starboard", function(value) value.enabled, value.channel_id, value.threshold = true, "500", 1; return true end))
+  local policy = ContentPolicy.new(settings, { rest = rest })
+  local starboard = Starboard.new(store, settings, { rest = rest, content_policy = policy })
+  local ok, reason = starboard:on_reaction(reaction("1", "100", "201", "10"), true)
+  assert(not ok and reason == "channel_safety_check_failed" and #sent == 0,
+    "NSFW source must be blocked while mature-content protection is off")
+  assert(policy:add_channel("1", "500"))
+  assert(policy:set_enabled("1", true))
+  ok, reason = starboard:on_reaction(reaction("1", "100", "202", "10"), true)
+  assert(ok and reason == "posted" and #sent == 1 and sent[1].channel == "500")
+  assert(sent[1].payload.content:find("mature theme", 1, true))
 end)
 
 test("community event wiring uses per-guild settings and bounds callbacks", function()
@@ -251,8 +283,16 @@ test("community event wiring uses per-guild settings and bounds callbacks", func
   local greetings = Greetings.new(settings)
   local logs = ActionLog.new(settings)
   local afk = AFK.new(store)
-  local events = CommunityEvents.new({ greetings = greetings, logs = logs, afk = afk })
+  local policy = { set_runtime = function(self, value) self.rest = value end }
+  local starboard = {
+    set_runtime = function(self, value, bot_id) self.rest, self.bot_id = value, bot_id end,
+    set_content_policy = function(self, value) self.content_policy = value end,
+    on_reaction = function() return true end,
+  }
+  local events = CommunityEvents.new({ greetings = greetings, logs = logs, afk = afk,
+    starboard = starboard, content_policy = policy })
   assert(events:bind(client, bot) and events:bind(client, bot))
+  assert(policy.rest == rest and starboard.rest == rest and starboard.bot_id == "999" and starboard.content_policy == policy)
   client_listeners.guild_create[1]({ id = "1", name = "Guild One", member_count = 5 })
   client_listeners.guild_member_add[1]({ guild_id = "1", user = { id = "50", username = "Member" } })
   assert(#sent == 2 and sent[1].channel == "200" and sent[2].channel == "300")

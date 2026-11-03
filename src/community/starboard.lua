@@ -40,16 +40,24 @@ local function ignored(config, channel_id)
   return false
 end
 
+local function rest_succeeded(called, result)
+  return called == true and result ~= nil and result ~= false
+end
+
 function Starboard.new(store, settings, options)
   options = options or {}
   assert(type(store) == "table" and type(store.run) == "function", "guild store is required")
   assert(type(settings) == "table" and type(settings.get_domain) == "function", "guild settings are required")
   return setmetatable({ store = store, settings = settings, rest = options.rest, bot_id = options.bot_id,
-    clock = options.clock or os.time, cache = {}, logger = options.logger }, Starboard)
+    content_policy = options.content_policy, clock = options.clock or os.time, cache = {}, logger = options.logger }, Starboard)
 end
 
 function Starboard:set_runtime(rest, bot_id)
   self.rest, self.bot_id = rest, bot_id
+end
+
+function Starboard:set_content_policy(policy)
+  self.content_policy = policy
 end
 
 function Starboard:_cache_state(key, state)
@@ -111,7 +119,7 @@ function Starboard:_delete(guild, origin_id, post)
     if not self.rest or type(self.rest.delete_message) ~= "function" then return false, "discord_unavailable" end
     local called, result = pcall(self.rest.delete_message, self.rest, post.channel_id, post.message_id,
       "Starboard reaction count fell below threshold")
-    if not called or result == false then return false, "delete_failed" end
+    if not rest_succeeded(called, result) then return false, "delete_failed" end
   end
   return self:_save_post(guild, origin_id, nil)
 end
@@ -123,7 +131,11 @@ function Starboard:_nsfw_allowed(guild, source_id, target_id)
   if not source_ok or type(source) ~= "table" or not target_ok or type(target) ~= "table"
     or source.guild_id ~= guild or target.guild_id ~= guild
     or type(source.nsfw) ~= "boolean" or type(target.nsfw) ~= "boolean" then return false end
-  if source.nsfw and not target.nsfw then return false end
+  if source.nsfw then
+    if not target.nsfw or not self.content_policy then return false end
+    local checked, allowed = pcall(self.content_policy.allows, self.content_policy, guild, target_id)
+    if not checked or not allowed then return false end
+  end
   return true
 end
 
@@ -158,7 +170,7 @@ function Starboard:_publish(guild, channel, origin_id, count, config, existing)
   if existing and existing.state == "sent" and existing.message_id then
     if type(self.rest.edit_message) ~= "function" then return false, "discord_unavailable" end
     local called, result = pcall(self.rest.edit_message, self.rest, existing.channel_id, existing.message_id, payload)
-    if not called or result == false then return false, "edit_failed" end
+    if not rest_succeeded(called, result) then return false, "edit_failed" end
     local saved, reason = self:_save_post(guild, origin_id,
       { state = "sent", channel_id = existing.channel_id, message_id = existing.message_id })
     if not saved then return false, reason end

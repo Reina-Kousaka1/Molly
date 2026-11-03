@@ -17,7 +17,7 @@ end
 function Events.new(options)
   options = options or {}
   return setmetatable({ greetings = options.greetings, afk = options.afk, logs = options.logs,
-    starboard = options.starboard, logger = options.logger, bound = false }, Events)
+    starboard = options.starboard, content_policy = options.content_policy, logger = options.logger, bound = false }, Events)
 end
 
 function Events:_run(name, callback, ...)
@@ -40,7 +40,11 @@ function Events:_configure(client, bot)
   if self.greetings then self.greetings:set_runtime(rest, client) end
   if self.logs and rest then self.logs:set_sender(function(channel, payload) return rest:send_message(channel, payload) end) end
   if self.afk and rest then self.afk.send = function(channel, payload) return rest:send_message(channel, payload) end end
-  if self.starboard then self.starboard:set_runtime(rest, bot and bot.user and bot.user.id or client and client.user and client.user.id) end
+  if self.content_policy then self.content_policy:set_runtime(rest) end
+  if self.starboard then
+    self.starboard:set_runtime(rest, bot and bot.user and bot.user.id or client and client.user and client.user.id)
+    if self.content_policy then self.starboard:set_content_policy(self.content_policy) end
+  end
 end
 
 function Events:bind(client, bot)

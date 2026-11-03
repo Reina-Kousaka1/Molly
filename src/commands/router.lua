@@ -12,6 +12,22 @@ function Router:set_gate(gate)
   self.gate = gate
 end
 
+function Router:set_observability(metrics)
+  assert(metrics == nil or (type(metrics.start) == "function" and type(metrics.record) == "function"),
+    "observability must expose start and record")
+  self.observability = metrics
+end
+
+function Router:_metric_start()
+  if not self.observability then return nil end
+  local ok, started = pcall(self.observability.start, self.observability)
+  return ok and started or nil
+end
+
+function Router:_metric_record(name, outcome, started)
+  if self.observability then pcall(self.observability.record, self.observability, name, outcome, started) end
+end
+
 function Router:set_permission_engine(engine)
   assert(engine == nil or type(engine.authorize) == "function", "permission engine must resolve authorization")
   self.permission_engine = engine
@@ -108,8 +124,10 @@ function Router:authorize(name, context)
 end
 
 function Router:dispatch(name, context)
+  local started = self:_metric_start()
   local authorized, reason = self:authorize(name, context)
   if not authorized then
+    if reason ~= "unknown_command" then self:_metric_record(name, "denied", started) end
     if reason ~= "unknown_command" and context and type(context.respond) == "function" then
       local message = reason == "blacklisted" and "You are globally blacklisted from using Molly."
         or reason == "permission_denied" and "You do not have permission to use this command."
@@ -121,6 +139,7 @@ function Router:dispatch(name, context)
   local definition = self.commands[name]
   local ok = pcall(definition.execute, context)
   if not ok then
+    self:_metric_record(name, "failed", started)
     if self.logger then self.logger:error("command_handler_failed", { command = name }) end
     if context and type(context.respond) == "function" then
       if context._molly_deferred and type(context.edit) == "function" then pcall(context.edit, context, "Molly could not complete that command.")
@@ -128,6 +147,7 @@ function Router:dispatch(name, context)
     end
     return false, "handler_failed"
   end
+  self:_metric_record(name, "succeeded", started)
   return true
 end
 

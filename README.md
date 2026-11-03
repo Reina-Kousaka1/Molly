@@ -31,9 +31,11 @@ Molly includes a staff directory and staff-management domain alongside moderatio
 
 ### Music
 
-Molly has a Lavalink v4 music foundation with support for YouTube-backed search and Spotify resolution through LavaSrc when configured.
+Molly has a Lavalink v4 music foundation with support for YouTube-backed search and Spotify resolution through LavaSrc when configured. Registered commands cover playback, track search, bounded queue controls, now-playing status, and persistent music panels. The runtime caps active sessions at 500, upcoming tracks at 50 (25 added per request), and bounds pending callbacks and panel caches; voice-handshake callbacks coalesce to the latest state and saturated Lavalink queues trigger bounded playback recovery.
 
-The repository contains the Lavalink client/adapter and the operational configuration used by Molly's Compose stack. Music configuration remains isolated from the core bot so deployments without a valid music configuration can fail safely rather than leaking credentials.
+`/voice` configures Join-to-Create rooms and owner controls for rooms created by Molly. Runtime tracking is capped at 500 guilds and 5,000 active voice members per guild, with 100 temporary rooms per guild and bounded pending callbacks. It verifies the trigger channel's category and fails closed on cleanup when member tracking is incomplete, callback buffers overflow, or Discord cannot confirm a deletion.
+
+The repository contains the Lavalink client/adapter and the operational configuration used by Molly's Compose stack. Music configuration remains isolated from the core bot so deployments without a valid music configuration can fail safely rather than leaking credentials. Playback requires a reachable Lavalink v4 service; deployment-specific `discord.lua` REST and voice contracts still require rollout verification.
 
 ### Discord interaction layer
 
@@ -47,7 +49,7 @@ Molly supports guild-only message commands through the same central router and c
 
 ### Guild permissions and community features
 
-The V2 foundation adds guild-isolated modular settings, a central command permission engine, welcome/goodbye messages, event logs, per-guild AFK statuses, safe self-assignable roles, and a reaction starboard. Guild overrides cannot grant developer, protected, or admin access; `MOLLY_DEVELOPER_IDS` remains authoritative. New features default off where they publish messages or change guild roles, and use bounded per-guild state. See [docs/v2-community.md](docs/v2-community.md) for command syntax, storage, limits, required Discord permissions, and API-version caveats.
+The V2 foundation adds guild-isolated modular settings, a central command permission engine, welcome/goodbye messages, event logs, per-guild AFK statuses, safe self-assignable roles, and a reaction starboard. Guild overrides cannot grant developer, protected, or admin access; `MOLLY_DEVELOPER_IDS` remains authoritative. New features default off where they publish messages or change guild roles, and use bounded state. See [docs/v2-community.md](docs/v2-community.md) for community features and [docs/v2-economy-modes.md](docs/v2-economy-modes.md) for inventory, the opt-in shop, mining, fashion, virtual Sephora mode, mature-content policy and optional user preferences.
 
 Automatic welcome/goodbye delivery and member-count tracking require the privileged `GUILD_MEMBERS` Gateway Intent. It remains opt-in (`MOLLY_GUILD_MEMBERS_INTENT=false` by default) and must also be enabled in the Discord Developer Portal. Prefix commands separately require the Message Content intent.
 
@@ -176,6 +178,9 @@ lua5.1 tests/test.lua
 lua5.1 tests/developer_lifecycle.lua
 lua5.1 tests/v2.lua
 lua5.1 tests/community.lua
+lua5.1 tests/economy_v2.lua
+lua5.1 tests/observability.lua
+lua5.1 tests/music_voice.lua
 lua5.1 tests/moderation_v2.lua
 lua5.1 tests/sprint.lua
 lua5.1 tests/economy_commands.lua
@@ -190,7 +195,7 @@ Tests that require a real external service should remain isolated from productio
 
 GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`.
 
-The workflow runs the core, lifecycle, V2, community, sprint, economy-command, and prefix-command suites, then checks whitespace with `git diff --check`.
+The workflow runs the core, lifecycle, V2, community, moderation, economy/mode, music/voice, observability, sprint, economy-command, and prefix-command suites, then checks whitespace with `git diff --check`.
 
 CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or production SeaWorld access.
 
