@@ -2,8 +2,11 @@ package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local Ledger = require("src.economy.ledger")
 
-local milestones = { 100, 1000, 10000, 100000 }
+local full_stress = os.getenv("MOLLY_STRESS_FULL") == "1"
+local rotation_milestones = { 100, 1000, 10000, 100000 }
+local ledger_milestones = full_stress and { 100, 1000, 10000, 100000 } or { 100, 1000, 10000 }
 local CAPACITY = Ledger.max_journal_records
+io.stdout:setvbuf("line")
 local function percentile(values, fraction)
   if #values == 0 then return 0 end
   table.sort(values)
@@ -40,7 +43,7 @@ end
 
 local function rotation_suite()
   io.write("rotation: implementation=table.remove|ring-index capacity=", CAPACITY, "\n")
-  for _, total in ipairs(milestones) do
+  for _, total in ipairs(rotation_milestones) do
     for _, ring in ipairs({ false, true }) do
       collectgarbage("collect")
       local before_kb = collectgarbage("count")
@@ -144,14 +147,14 @@ local function benchmark_ledger()
   local before_kb = collectgarbage("count")
   local milestone_index = 1
 
-  for index = 1, milestones[#milestones] do
+  for index = 1, ledger_milestones[#ledger_milestones] do
     local started = os.clock()
     local ok, result = ledger:change(data.guild, tostring(20000000000 + index),
       tostring(10000000000 + index), "daily")
     local elapsed = os.clock() - started
     assert(ok and result.wallet == 100, "synthetic ledger operation failed at " .. index)
     latencies[index] = elapsed
-    if index == milestones[milestone_index] then
+    if index == ledger_milestones[milestone_index] then
       local elapsed_total = os.clock() - overall_start
       local sample = {}
       for sample_index = 1, index do sample[sample_index] = latencies[sample_index] end
@@ -175,6 +178,7 @@ local function benchmark_ledger()
   io.write("ledger state remained in a synthetic in-memory store; this is not a SeaWorld persistence measurement\n")
 end
 
+io.write("stress profile: ", full_stress and "full (through 100000)" or "CI (through 10000)", "\n")
 rotation_suite()
 receipt_retention_checks()
 benchmark_ledger()

@@ -66,14 +66,22 @@ delta, and retained count for the existing rotation and a test-only ring-index
 candidate at 100, 1,000, 10,000, and 100,000 appends. It asserts that both retain
 the same oldest-to-newest window. The ring candidate is not production code.
 
-The same script runs 100, 1,000, 10,000, and 100,000 distinct-user ledger
+The same script runs 100, 1,000, 10,000, and (in full mode) 100,000 distinct-user ledger
 operations against an in-memory store and reports throughput, average/p95/p99/
 maximum operation latency, heap delta, account count, journal count, and receipt
 count. This includes the actual ledger's receipt validation/retention path but
 excludes socket, JSON serialization, SeaWorld commit, and process restart costs.
 
-Benchmark output for the final tested commit is recorded below after CI runs.
-No timing or memory figures are inferred or filled in from a model.
+The first full CI attempt reached the 30-minute workflow timeout before the
+100,000-operation ledger benchmark completed. GitHub canceled the job, so no
+100,000 timing or throughput is reported. The CI profile is now capped at 10,000
+operations; the full profile remains explicitly runnable with
+`MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua`. The timeout is a failed/incomplete
+stress result, not a pass, and indicates a serious scaling concern in the
+synthetic full receipt-validation/eviction path.
+
+No timing or memory figures are inferred or filled in from a model. Measured CI
+profile output for the final tested commit will be inserted after the rerun.
 
 ## Receipt retention and replay semantics
 

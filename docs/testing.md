@@ -28,7 +28,14 @@ with `luac5.1 -p` (override with `LUAC_BIN`), then includes:
 - `tests/prefix_commands.lua`
 - `tests/embeds.lua`
 - `tests/stress.lua` (synthetic in-memory ledger and journal-rotation benchmarks;
-  no SeaWorld connection)
+  no SeaWorld connection; the CI ledger profile reaches 10,000 bookings and the
+  rotation microbenchmark reaches 100,000 appends)
+
+Run the extended 100,000-operation profile explicitly with
+`MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua`. This profile is intentionally not
+part of the per-commit CI gate because the first full run exceeded its 30-minute
+job timeout while exercising the current full receipt-validation path. Its
+timeout is an incomplete benchmark, never a pass or a SeaWorld result.
 
 The Python test `tests/lavalink_env_transfer.py` uses the standard library and
 exercises the environment-configuration helper without Docker or live
