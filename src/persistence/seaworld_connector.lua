@@ -128,9 +128,12 @@ function Connector:_request(name, payload)
   if not self.driver or type(self.driver.operation) ~= "function" then return false, "capability_unavailable" end
   local ok, success, result = pcall(self.driver.operation, self.driver, name, payload)
   if not ok or not success then
-    if self.in_transaction then self.in_transaction = false end
-    self.current = state("unavailable", "operation_failed")
-    return false, ok and result or "operation_failed"
+    local reason = ok and result or "operation_failed"
+    if self.in_transaction and not (reason == "resource_limit" and self.driver.in_transaction == true) then
+      self.in_transaction = false
+    end
+    self.current = state("unavailable", reason or "operation_failed")
+    return false, reason or "operation_failed"
   end
   return true, result
 end
@@ -159,8 +162,9 @@ function Connector:_finish(name)
   local ok, success, result = pcall(self.driver[name], self.driver)
   self.in_transaction = false
   if not ok or not success then
-    self.current = state("unavailable", "operation_failed")
-    return false, ok and result or "operation_failed"
+    local reason = ok and result or "operation_failed"
+    self.current = state("unavailable", reason or "operation_failed")
+    return false, reason or "operation_failed"
   end
   return true, result
 end

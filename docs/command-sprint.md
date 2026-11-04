@@ -53,13 +53,18 @@ and work 20/1h; a backward clock fails closed. Account records have no
 application-level count cap and are not evicted; the transport's 1 MiB frame
 limit may be reached earlier. The journal rotates at 1,000 records per guild,
 so balances continue to work while older history and Money-ID lookups age out.
-Economy idempotency receipts retain at most 5,000 requests per guild. Numeric
+Economy idempotency receipts retain at most 1,000 requests per guild. Numeric
 per-request-type watermarks reject expired IDs rather than allowing a retry to
 repeat an old reward or charge; old replay results are no longer available.
-Unrelated legacy receipts remain readable and other feature receipts are not
-pruned by this economy policy. Moderation is capped at 1,000 cases and staff
-records at 50 notes. Transactions and staff/case history are limited when
-displayed, and no SeaWorld storage internals are exposed.
+Unrelated legacy receipts are preserved during economy migration. Staff,
+Sephora, global blacklist, and lifecycle receipts have separate bounded windows
+(1,000, 5,000, 1,000, and 1,000 respectively); staff migration removes only
+receipts that exactly match the legacy staff-receipt shape. Moderation is capped
+at 1,000 cases and case receipts are compact references. Staff records remain
+limited to 50 notes each. Aggregate guild writes are rejected with
+`resource_limit` at the Molly 1 MiB JSON-frame boundary rather than silently
+truncated. Transactions and staff/case history are limited when displayed, and
+no SeaWorld storage internals are exposed.
 
 Music commands are registered in `molly.lua`: `/play`, playback controls,
 queue inspection/reordering, `/nowplaying`, and the persistent `/music-panel`.

@@ -40,7 +40,8 @@ function GlobalStore:run(name, defaults, fn)
     if not success then return false, result end
     if changed then
       local updated, update = c:update({ collection = collection, id = id, set = { data = data } })
-      if not updated or update.updated ~= true then return false, "unavailable" end
+      if not updated then return false, update == "resource_limit" and "resource_limit" or "unavailable" end
+      if type(update) ~= "table" or update.updated ~= true then return false, "unavailable" end
     end
     if not c:commit() then return false, "outcome_unknown" end
     return true, result

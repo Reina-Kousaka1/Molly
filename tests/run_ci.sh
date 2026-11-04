@@ -11,6 +11,7 @@ find src tests -type f -name '*.lua' -exec "$LUAC_BIN" -p {} +
 
 for suite in \
   tests/test.lua \
+  tests/seaworld_driver.lua \
   tests/developer_lifecycle.lua \
   tests/v2.lua \
   tests/community.lua \

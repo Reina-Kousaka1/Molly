@@ -71,11 +71,12 @@ local function receipt_retention_checks()
   store.persisted = data
   local ledger = Ledger.new(store, function() return 2000000000 end)
 
-  for index = 1, 4000 do
+  local interaction_count = Ledger.max_economy_receipts - 1
+  for index = 1, interaction_count do
     local ok = ledger:change(data.guild, tostring(30000000000 + index), tostring(10000000000 + index), "daily")
     assert(ok)
   end
-  for index = 1, 1000 do
+  for index = 1, 1 do
     local ok = ledger:change(data.guild, tostring(40000000000 + index), tostring(20000000000 + index),
       "daily", nil, nil, "message")
     assert(ok)

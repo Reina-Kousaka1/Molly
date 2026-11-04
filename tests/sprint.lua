@@ -127,6 +127,24 @@ test("case creation, reason edit, removal and missing modlog", function()
   ok, item = cases:edit("1", "C1", "2", "remove"); assert(ok and not item.active)
   ok, item = cases:modlog("1", "status"); assert(ok and item == "")
 end)
+test("case receipts compact duplicate case documents and migrate legacy replay values", function()
+  local store = memory_store()
+  local cases = Cases.new(store, function() return 100 end)
+  local ok, item = cases:warn("8", "2", "3", "reason", "900")
+  assert(ok and item.id == "C1")
+  assert(store.data["8"].receipts["900"].case_id == "C1")
+  ok, item = cases:warn("8", "2", "3", "different retry payload", "900")
+  assert(ok and item.id == "C1" and item.reason == "reason")
+
+  local legacy = { id = "C9", guild = "9", action = "warn", target = "4", moderator = "2",
+    reason = "old record", timestamp = 90, active = true }
+  store.data["9"] = { guild = "9", accounts = {}, cases = { clone(legacy) }, staff = {}, journal = {},
+    receipts = { ["901"] = clone(legacy) }, next_case = 10 }
+  local replayed, saved = cases:warn("9", "2", "4", "old retry", "901")
+  assert(replayed and saved.id == "C9" and saved.reason == "old record")
+  assert(store.data["9"].receipts["901"].case_id == "C9", "legacy receipts compact only after a matching case is found")
+end)
+
 test("staff notes are private and invalid staff actions fail", function()
   local directory = Directory.new(memory_store(), function() return 100 end)
   assert(not directory:apply("1", "2", "3", "promote"))
@@ -143,6 +161,69 @@ test("staff notes are private and invalid staff actions fail", function()
   local allowed, reason = router:dispatch("staffinfo", ctx)
   assert(not allowed and reason == "permission_denied" and ephemeral and reply:find("permission"))
 end)
+test("staff receipt migration preserves legacy replays and unrelated receipts", function()
+  local store = memory_store()
+  local data = { guild = "42", accounts = {}, cases = {}, staff = {
+    ["3"] = { id = "3", active = true, notes = { { author = "2", text = "legacy note", timestamp = 1 } } },
+  }, journal = {}, receipts = { ["700"] = { id = "C1", action = "warn", target = "4" } }, next_case = 2 }
+  local legacy_ids = {}
+  for index = 1005, 1, -1 do
+    local id = "200000000000000" .. string.format("%04d", index)
+    legacy_ids[index] = id
+    data.receipts[id] = { staff_id = "3" }
+  end
+  store.data["42"] = data
+  local directory = Directory.new(store)
+  local ok, entry = directory:apply("42", "2", "3", "info", nil, "3000000000000000000")
+  assert(ok and entry.id == "3")
+  data = store.data["42"]
+  assert(data.staff_receipts_migrated and data.staff_receipt_count == Directory.max_receipts)
+  assert(data.staff_receipt_watermark == legacy_ids[5])
+  assert(data.receipts[legacy_ids[1]] == nil and data.receipts[legacy_ids[1005]] == nil)
+  assert(data.receipts["700"].id == "C1", "moderation receipts must remain in their legacy namespace")
+  local note_count = #data.staff["3"].notes
+  local expired, reason = directory:apply("42", "2", "3", "note", "should not run", legacy_ids[1])
+  assert(not expired and reason == "replay_expired" and #data.staff["3"].notes == note_count)
+  local replayed, same_entry = directory:apply("42", "2", "3", "note", "legacy retry", legacy_ids[6])
+  assert(replayed and same_entry.id == "3" and #data.staff["3"].notes == note_count,
+    "opaque V1.2 receipts replay without repeating a staff mutation")
+  local restarted = Directory.new(memory_store())
+  restarted.store.data["42"] = clone(data)
+  local after_restart = restarted:apply("42", "2", "3", "info", nil, "3000000000000000000")
+  assert(after_restart and restarted.store.data["42"].staff_receipt_count == Directory.max_receipts)
+end)
+
+test("staff receipts stay bounded, detect request conflicts, and expire safely after reload", function()
+  local store = memory_store()
+  store.data["43"] = { guild = "43", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  local directory = Directory.new(store, function() return 100 end)
+  local first_id, last_id
+  for index = 1, Directory.max_receipts + 1 do
+    local request = "100000000000000" .. string.format("%04d", index)
+    local action = index % 2 == 1 and "add" or "remove"
+    local ok = directory:apply("43", "2", "3", action, nil, request)
+    assert(ok, "new staff operations must continue after receipt rotation")
+    if index == 1 then first_id = request end
+    last_id = request
+  end
+  local data = store.data["43"]
+  assert(data.staff_receipt_count == Directory.max_receipts and #data.staff_receipt_order == Directory.max_receipts)
+  assert(data.staff_receipts[first_id] == nil and data.staff_receipt_watermark == first_id)
+  local note_count = #data.staff["3"].notes
+  local expired, reason = directory:apply("43", "2", "3", "add", nil, first_id)
+  assert(not expired and reason == "replay_expired" and #data.staff["3"].notes == note_count)
+  local conflict, conflict_reason = directory:apply("43", "99", "3", "remove", nil, last_id)
+  assert(not conflict and conflict_reason == "replay_conflict")
+  local replayed = directory:apply("43", "2", "3", "add", nil, last_id)
+  assert(replayed and data.staff["3"].active, "retained requests replay without reapplying")
+  local reloaded_store = memory_store(); reloaded_store.data["43"] = clone(data)
+  local after_restart = Directory.new(reloaded_store, function() return 101 end)
+  local old_again, old_reason = after_restart:apply("43", "2", "3", "add", nil, first_id)
+  assert(not old_again and old_reason == "replay_expired")
+  local newest_again = after_restart:apply("43", "2", "3", "add", nil, last_id)
+  assert(newest_again and reloaded_store.data["43"].staff_receipt_count == Directory.max_receipts)
+end)
+
 test("hackban validates, checks permissions, stores a case and never replays", function()
   local store = memory_store(); local cases = Cases.new(store, function() return 100 end)
   local router = Router.new(); Moderation.register(router, cases)

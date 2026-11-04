@@ -33,7 +33,7 @@ The existing Message Content intent remains separately required for prefix comma
 - Starboard publication records: at most 5,000 per guild. In-memory vote state is limited to 500 messages and 256 tracked voters per message. Publication records are additive under `data.molly_v2.starboard`; vote state is transient.
 - Greeting, action-log, and role settings are stored per guild under `data.molly_v2.settings` and validated before writes.
 
-No V2 module uses a process-wide lock for guild work. Economy ledger receipt retention and the 1,000-row journal rotation are described in [v2-economy-modes.md](v2-economy-modes.md); unrelated community receipts remain in their existing V2 sections.
+No V2 module uses a process-wide lock for guild work. Economy ledger receipt retention and the 1,000-row journal rotation are described in [v2-economy-modes.md](v2-economy-modes.md). Shared receipt windows and migration rules for other features are summarized in [v2-hardening-report.md](v2-hardening-report.md); those migrations preserve legacy receipts that do not match the feature's exact known receipt shape.
 
 ## Discord API and safety limits
 

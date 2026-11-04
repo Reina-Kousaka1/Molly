@@ -13,6 +13,7 @@ local MusicAdapter = require("src.music.adapter")
 local LavalinkClient = require("src.music.lavalink_client")
 local SeaWorldConnector = require("src.persistence.seaworld_connector")
 local GuildStore = require("src.persistence.guild_store")
+local GlobalStore = require("src.persistence.global_store")
 local Ledger = require("src.economy.ledger")
 local Health = require("src.health")
 local Response = require("src.discord.response")
@@ -452,6 +453,42 @@ test("guild store fails closed when the connector cannot create isolated session
   local ok, reason = store:run("10", function() error("must not run") end)
   assert(not ok and reason == "capability_unavailable")
   assert(not store.busy_guilds["10"])
+end)
+
+test("guild store preserves resource_limit and rolls back the untouched transaction", function()
+  local base = persistence_fixture()
+  local open_session = base.session
+  function base:session()
+    local session = open_session(self)
+    function session:update() return false, "resource_limit" end
+    return session
+  end
+  local store = GuildStore.new(base)
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "changed", true
+  end)
+  assert(not ok and reason == "resource_limit")
+  assert(base.rollbacks["10"] == 1 and base.commits["10"] == nil)
+  assert(base.data["10"].accounts["101"] == nil and not base.leaked)
+  assert(not store.busy_guilds["10"])
+end)
+
+test("global store preserves resource_limit and rolls back the open transaction", function()
+  local rollbacks = 0
+  local session = { in_transaction = false }
+  function session:query() return true, { rows = { { id = "global-doc" } } } end
+  function session:begin() self.in_transaction = true; return true end
+  function session:get() return true, { document = { data = {} } } end
+  function session:update() return false, "resource_limit" end
+  function session:rollback() rollbacks = rollbacks + 1; self.in_transaction = false; return true end
+  function session:close() self.in_transaction = false; return true end
+  local store = GlobalStore.new({ session = function() return session end })
+  local ok, reason = store:run("global-fixture", {}, function(data)
+    data.changed = true
+    return true, "updated", true
+  end)
+  assert(not ok and reason == "resource_limit" and rollbacks == 1 and not session.in_transaction)
 end)
 
 test("health status remains non-sensitive", function()

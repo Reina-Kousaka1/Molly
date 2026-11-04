@@ -55,7 +55,10 @@ function Store:run(guild_id, fn)
     if not ok then return false, result end
     if changed then
       local updated, update = c:update({ collection = collection, id = id, set = { data = data } })
-      if not updated or update.updated ~= true then return false, "unavailable" end
+      if not updated then
+        return false, update == "resource_limit" and "resource_limit" or "unavailable"
+      end
+      if type(update) ~= "table" or update.updated ~= true then return false, "unavailable" end
     end
     commit_attempted = true
     local commit_call_ok, committed = pcall(c.commit, c)

@@ -8,18 +8,41 @@ end
 local function reason(value)
   return type(value) == "string" and #value >= 1 and #value <= 500 and value:match("%S") and value or nil
 end
+local function case_for_receipt(data, receipt)
+  if type(receipt) ~= "table" then return nil end
+  local id = receipt.case_id or receipt.id
+  if not parse(id) then return nil end
+  for _, item in ipairs(data.cases) do
+    if item.id == id then
+      if receipt.case_id == id then
+        for key in pairs(receipt) do if key ~= "case_id" then return nil end end
+        return item
+      end
+      if receipt.guild == item.guild and receipt.action == item.action and receipt.target == item.target
+        and receipt.moderator == item.moderator and receipt.timestamp == item.timestamp then return item end
+      return nil
+    end
+  end
+  return nil
+end
 function Cases.new(store, clock) return setmetatable({ store = store, clock = clock or os.time }, Cases) end
 
 function Cases:warn(guild, actor, target, text, request)
   if not Store.valid_id(actor) or not Store.valid_id(target) or not Store.valid_id(request) or not reason(text) then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
-    if data.receipts[request] then return true, data.receipts[request], false end
+    if data.receipts[request] then
+      local case = case_for_receipt(data, data.receipts[request])
+      if not case then return false, "invalid_store" end
+      local changed = data.receipts[request].case_id ~= case.id
+      if changed then data.receipts[request] = { case_id = case.id } end
+      return true, case, changed
+    end
     if #data.cases >= 1000 or type(data.next_case) ~= "number" or data.next_case < 1 or data.next_case > 9999999999999 then return false, "capacity" end
     local case = { id = "C" .. string.format("%.0f", data.next_case), guild = guild, action = "warn", target = target,
       moderator = actor, reason = text, timestamp = self.clock(), active = true }
     data.next_case = data.next_case + 1
     data.cases[#data.cases + 1] = case
-    data.receipts[request] = case
+    data.receipts[request] = { case_id = case.id }
     return true, case, true
   end)
 end
@@ -31,16 +54,19 @@ function Cases:pending(guild, actor, target, text, request, action)
     or not reason(text) or action ~= "hackban" then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
     if data.receipts[request] then
-      local id = data.receipts[request].id
-      for _, item in ipairs(data.cases) do if item.id == id then return true, { case = item, fresh = false }, false end end
-      return false, "invalid_store"
+      local receipt = data.receipts[request]
+      local case = case_for_receipt(data, receipt)
+      if not case then return false, "invalid_store" end
+      local changed = receipt.case_id ~= case.id
+      if changed then data.receipts[request] = { case_id = case.id } end
+      return true, { case = case, fresh = false }, changed
     end
     if #data.cases >= 1000 or type(data.next_case) ~= "number" or data.next_case < 1 or data.next_case > 9999999999999 then return false, "capacity" end
     local case = { id = "C" .. string.format("%.0f", data.next_case), guild = guild, action = action, target = target,
       moderator = actor, reason = text, timestamp = self.clock(), active = true, status = "pending" }
     data.next_case = data.next_case + 1
     data.cases[#data.cases + 1] = case
-    data.receipts[request] = case
+    data.receipts[request] = { case_id = case.id }
     return true, { case = case, fresh = true }, true
   end)
 end

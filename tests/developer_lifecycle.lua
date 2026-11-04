@@ -23,6 +23,23 @@ test("blacklist add check remove is persistent and idempotent", function()
   assert(blacklist:remove("10", "99", "1001")); ok, entry = blacklist:check("10"); assert(ok and entry == nil)
 end)
 
+test("blacklist receipts rotate safely and reject expired replays", function()
+  local store = memory_store()
+  local blacklist = Blacklist.new(store, function() return 100 end)
+  local function request_id(index) return "100000000000000" .. string.format("%04d", index) end
+  for index = 1, Blacklist.max_receipts + 1 do
+    local ok = blacklist:add("10", "reason", "99", request_id(index))
+    assert(ok)
+  end
+  local data = store.buckets.blacklist
+  assert(data.receipt_count == Blacklist.max_receipts and #data.receipt_order == Blacklist.max_receipts)
+  assert(data.receipts[request_id(1)] == nil and data.receipt_watermark == request_id(1))
+  local expired, reason = blacklist:add("11", "different", "99", request_id(1))
+  assert(not expired and reason == "replay_expired" and data.entries["11"] == nil)
+  local retained = blacklist:add("10", "changed", "99", request_id(Blacklist.max_receipts + 1))
+  assert(retained and data.entries["10"].reason == "reason")
+end)
+
 test("central command gate blocks blacklisted users but admin definitions bypass it", function()
   local router, ran = Router.new(), false
   router:set_gate(function(ctx) return ctx.author.id ~= "10", "blacklisted" end)
@@ -53,6 +70,35 @@ test("lifecycle markers deduplicate requests and clear exactly once", function()
   assert(lifecycle:complete("100")); local _, empty = lifecycle:pending(); assert(empty == false)
   local complete_again = lifecycle:complete("100"); assert(not complete_again)
   assert(Lifecycle.EXIT_SHUTDOWN == 0 and Lifecycle.EXIT_RESTART ~= 0 and Lifecycle.EXIT_UPDATE ~= Lifecycle.EXIT_RESTART)
+end)
+
+test("lifecycle receipt window survives restart loops and keeps cancellation ring consistent", function()
+  local store = memory_store()
+  local lifecycle = Lifecycle.new(store, { clock = function() return 200 end })
+  local function request(index)
+    return { interaction_id = "200000000000000" .. string.format("%04d", index),
+      guild_id = "1", channel_id = "2", requester_id = "3" }
+  end
+  for index = 1, Lifecycle.max_receipts + 1 do
+    local value = request(index)
+    assert(lifecycle:request("restart", value))
+    assert(lifecycle:complete(value.interaction_id))
+  end
+  local data = store.buckets.lifecycle
+  assert(data.receipt_count == Lifecycle.max_receipts and #data.receipt_order == Lifecycle.max_receipts)
+  assert(data.receipts[request(1).interaction_id] == nil
+    and data.receipt_watermark == request(1).interaction_id)
+  local expired, reason = lifecycle:request("restart", request(1))
+  assert(not expired and reason == "replay_expired")
+  local current = request(Lifecycle.max_receipts + 2)
+  assert(lifecycle:request("restart", current))
+  assert(lifecycle:cancel(current.interaction_id))
+  data = store.buckets.lifecycle
+  assert(data.pending == false and data.receipts[current.interaction_id] == nil)
+  assert(data.receipt_count == Lifecycle.max_receipts - 1 and #data.receipt_order == Lifecycle.max_receipts - 1)
+  assert(lifecycle:request("restart", current), "safe cancellation must allow the same request to be retried")
+  assert(lifecycle:cancel(current.interaction_id))
+  assert(data.receipt_count == Lifecycle.max_receipts - 1)
 end)
 
 test("normal lifecycle state has no post-restart marker", function()

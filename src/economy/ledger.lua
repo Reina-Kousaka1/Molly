@@ -4,9 +4,11 @@ local Ledger = {}
 Ledger.__index = Ledger
 local MAX = 1000000000000
 local MAX_JOURNAL_RECORDS = 1000
-local MAX_ECONOMY_RECEIPTS = 5000
+local MAX_ECONOMY_RECEIPTS = 1000
 local MAX_HISTORY = 20
 local MINING_COOLDOWN = 30
+local MAX_CACHED_RECEIPT_INDEXES = 8
+local MAX_RECEIPT_GENERATION = 9007199254740991
 local BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 local function base36(decimal)
@@ -98,7 +100,8 @@ end
 local function receipt_item_less(left, right)
   local compared = compare_decimal(left.request_id, right.request_id)
   if compared ~= 0 then return compared < 0 end
-  return left.request_type < right.request_type
+  if left.request_type ~= right.request_type then return left.request_type < right.request_type end
+  return left.request_id < right.request_id
 end
 
 local function advance_watermark(watermarks, request_type, request_id)
@@ -108,16 +111,20 @@ local function advance_watermark(watermarks, request_type, request_id)
   end
 end
 
+local function heap_insert(heap, item)
+  heap[#heap + 1] = item
+  local index = #heap
+  while index > 1 do
+    local parent = math.floor(index / 2)
+    if not receipt_item_less(heap[index], heap[parent]) then break end
+    heap[index], heap[parent] = heap[parent], heap[index]
+    index = parent
+  end
+end
+
 local function heap_push_retained(heap, item, watermarks)
   if #heap < MAX_ECONOMY_RECEIPTS then
-    heap[#heap + 1] = item
-    local index = #heap
-    while index > 1 do
-      local parent = math.floor(index / 2)
-      if not receipt_item_less(heap[index], heap[parent]) then break end
-      heap[index], heap[parent] = heap[parent], heap[index]
-      index = parent
-    end
+    heap_insert(heap, item)
     return
   end
   if not receipt_item_less(heap[1], item) then
@@ -136,6 +143,34 @@ local function heap_push_retained(heap, item, watermarks)
     heap[index], heap[smallest] = heap[smallest], heap[index]
     index = smallest
   end
+end
+
+local function heap_pop_min(heap)
+  if #heap == 0 then return nil end
+  local first, last = heap[1], heap[#heap]
+  heap[#heap] = nil
+  if #heap > 0 then
+    heap[1] = last
+    local index = 1
+    while true do
+      local left, right = index * 2, index * 2 + 1
+      local smallest = index
+      if left <= #heap and receipt_item_less(heap[left], heap[smallest]) then smallest = left end
+      if right <= #heap and receipt_item_less(heap[right], heap[smallest]) then smallest = right end
+      if smallest == index then break end
+      heap[index], heap[smallest] = heap[smallest], heap[index]
+      index = smallest
+    end
+  end
+  return first
+end
+
+local function valid_generation(value)
+  return type(value) == "number" and value % 1 == 0 and value >= 0 and value <= MAX_RECEIPT_GENERATION
+end
+
+local function valid_receipt_count(value)
+  return type(value) == "number" and value % 1 == 0 and value >= 0 and value <= MAX_ECONOMY_RECEIPTS
 end
 
 local function legacy_receipt_identity(key, receipt)
@@ -220,7 +255,7 @@ local function valid_watermarks(value)
   return true
 end
 
-local function prepare_receipts(data, guild)
+local function prepare_receipts(data, guild, cached)
   if type(data.receipts) ~= "table" then return nil, "invalid_store" end
   if data.economy_receipts ~= nil and type(data.economy_receipts) ~= "table" then return nil, "invalid_store" end
   if data.economy_receipt_watermarks ~= nil and not valid_watermarks(data.economy_receipt_watermarks) then
@@ -229,32 +264,46 @@ local function prepare_receipts(data, guild)
   if data.economy_receipts_migrated ~= nil and type(data.economy_receipts_migrated) ~= "boolean" then
     return nil, "invalid_store"
   end
+
+  local changed = false
   local receipts = data.economy_receipts or {}
   local watermarks = data.economy_receipt_watermarks or {}
+  if data.economy_receipts == nil or data.economy_receipt_watermarks == nil then changed = true end
+  if watermarks.interaction == nil or watermarks.message == nil then changed = true end
   watermarks.interaction, watermarks.message = watermarks.interaction or "", watermarks.message or ""
-  if data.economy_receipts_migrated == true then
-    local count, actual_count, fast_path_valid = data.economy_receipt_count, 0, true
-    if type(count) == "number" and count % 1 == 0 and count >= 0 and count <= MAX_ECONOMY_RECEIPTS then
-      for key, envelope in pairs(receipts) do
-        actual_count = actual_count + 1
-        if actual_count > MAX_ECONOMY_RECEIPTS then fast_path_valid = false; break end
-        if not valid_envelope(key, envelope) then fast_path_valid = false end
-      end
-      if fast_path_valid and actual_count == count then
-        data.economy_receipts, data.economy_receipt_watermarks = receipts, watermarks
-        return false
-      end
-    end
+
+  local generation = data.economy_receipt_generation
+  local generation_present = generation ~= nil
+  if generation == nil then
+    generation = 0
+    changed = true
+  elseif not valid_generation(generation) then
+    return nil, "invalid_store"
   end
 
-  local heap = {}
+  local count = data.economy_receipt_count
+  local cache_valid = generation_present and data.economy_receipts_migrated == true and valid_receipt_count(count)
+    and type(cached) == "table" and cached.generation == generation and cached.count == count
+    and type(cached.heap) == "table" and #cached.heap == count
+  if cache_valid and count > 0 then
+    local oldest = cached.heap[1]
+    cache_valid = type(oldest) == "table" and type(oldest.key) == "string"
+      and valid_envelope(oldest.key, receipts[oldest.key])
+  end
+  if cache_valid then
+    data.economy_receipts, data.economy_receipt_count = receipts, count
+    data.economy_receipt_watermarks, data.economy_receipt_generation = watermarks, generation
+    return changed, cached
+  end
+
+  local heap, actual_count = {}, 0
   for key, envelope in pairs(receipts) do
     local request_type, request_id = parse_receipt_key(key)
     if not request_type or not valid_envelope(key, envelope) then return nil, "invalid_store" end
+    actual_count = actual_count + 1
     heap_push_retained(heap, { key = key, request_type = request_type, request_id = request_id, envelope = envelope }, watermarks)
   end
 
-  local changed = true
   if data.economy_receipts_migrated ~= true then
     for key, receipt in pairs(data.receipts) do
       local request_type, request_id = legacy_receipt_identity(key, receipt)
@@ -263,6 +312,7 @@ local function prepare_receipts(data, guild)
         if receipts[new_key] == nil then
           heap_push_retained(heap, { key = new_key, request_type = request_type, request_id = request_id,
             envelope = legacy_envelope(data, guild, request_type, request_id, receipt) }, watermarks)
+          actual_count = actual_count + 1
         end
         data.receipts[key] = nil
         changed = true
@@ -272,12 +322,21 @@ local function prepare_receipts(data, guild)
     changed = true
   end
 
+  if actual_count > MAX_ECONOMY_RECEIPTS or not valid_receipt_count(count) or count ~= actual_count then
+    changed = true
+  end
   local retained = {}
   for _, item in ipairs(heap) do retained[item.key] = item.envelope end
-  data.economy_receipts = retained
+  if changed then
+    data.economy_receipts = retained
+  else
+    data.economy_receipts = receipts
+  end
   data.economy_receipt_count = #heap
   data.economy_receipt_watermarks = watermarks
-  return changed
+  data.economy_receipt_generation = generation
+  local index = { heap = heap, generation = generation, count = #heap }
+  return changed, index
 end
 
 local function fingerprint_matches(stored, requested)
@@ -292,54 +351,78 @@ local function fingerprint_matches(stored, requested)
   return true
 end
 
-local function find_oldest_receipt(data)
-  local oldest
-  for key, envelope in pairs(data.economy_receipts) do
-    if not valid_envelope(key, envelope) then return nil, "invalid_store" end
-    local request_type, request_id = parse_receipt_key(key)
-    local item = { key = key, request_type = request_type, request_id = request_id }
-    if not oldest or receipt_item_less(item, oldest) then oldest = item end
-  end
-  if not oldest then return nil, "invalid_store" end
-  return oldest
-end
-
-local function check_request(data, guild, request_type, request_id, fingerprint)
-  local changed, reason = prepare_receipts(data, guild)
-  if changed == nil then return false, reason end
+local function check_request(data, guild, request_type, request_id, fingerprint, cached)
+  local changed, index = prepare_receipts(data, guild, cached)
+  if changed == nil then return false, index end
   local key = receipt_key(request_type, request_id)
   local receipt = data.economy_receipts[key]
   if receipt then
-    if not valid_envelope(key, receipt) then return false, "invalid_store" end
-    if not fingerprint_matches(receipt.fingerprint, fingerprint) then return false, "replay_conflict" end
+    if not valid_envelope(key, receipt) then return false, "invalid_store", changed, nil, index end
+    if not fingerprint_matches(receipt.fingerprint, fingerprint) then
+      return false, "replay_conflict", changed, nil, index
+    end
     local result = public_record(receipt.result)
-    return true, result, changed
+    return true, result, changed, nil, index
   end
   local watermark = data.economy_receipt_watermarks[request_type]
-  if watermark ~= "" and compare_decimal(request_id, watermark) <= 0 then return false, "replay_expired" end
-  local oldest
-  if data.economy_receipt_count >= MAX_ECONOMY_RECEIPTS then
-    oldest, reason = find_oldest_receipt(data)
-    if not oldest then return false, reason end
-    local candidate = { request_type = request_type, request_id = request_id }
-    if not receipt_item_less(oldest, candidate) then return false, "replay_expired" end
+  if watermark ~= "" and compare_decimal(request_id, watermark) <= 0 then
+    return false, "replay_expired", changed, nil, index
   end
-  return nil, nil, changed, oldest
+  local oldest
+  if index.count >= MAX_ECONOMY_RECEIPTS then
+    oldest = index.heap[1]
+    if not oldest or not valid_envelope(oldest.key, data.economy_receipts[oldest.key]) then
+      return false, "invalid_store", changed, nil, index
+    end
+    local candidate = { request_type = request_type, request_id = request_id }
+    if not receipt_item_less(oldest, candidate) then
+      return false, "replay_expired", changed, nil, index
+    end
+  end
+  return nil, nil, changed, oldest, index
 end
 
-local function save_receipt(data, request_type, request_id, fingerprint, result, oldest)
-  local key = receipt_key(request_type, request_id)
-  if data.economy_receipt_count >= MAX_ECONOMY_RECEIPTS then
-    if not oldest then oldest = find_oldest_receipt(data) end
-    if not oldest then return false end
+local function save_receipt(data, request_type, request_id, fingerprint, result, oldest, index)
+  if type(index) ~= "table" or type(index.heap) ~= "table" or index.count ~= #index.heap
+    or not valid_generation(index.generation) or index.generation >= MAX_RECEIPT_GENERATION then
+    return false
+  end
+  local count, evicted = index.count, nil
+  if count >= MAX_ECONOMY_RECEIPTS then
+    oldest = oldest or index.heap[1]
+    if not oldest or not valid_envelope(oldest.key, data.economy_receipts[oldest.key]) then return false end
+    if not index.heap[1] or index.heap[1].key ~= oldest.key then return false end
     data.economy_receipts[oldest.key] = nil
     advance_watermark(data.economy_receipt_watermarks, oldest.request_type, oldest.request_id)
-    data.economy_receipt_count = data.economy_receipt_count - 1
+    evicted = { key = oldest.key, request_type = oldest.request_type, request_id = oldest.request_id }
+    count = count - 1
   end
+  local key = receipt_key(request_type, request_id)
   data.economy_receipts[key] = { request_type = request_type, request_id = request_id,
     fingerprint = fingerprint, result = public_record(result) }
-  data.economy_receipt_count = data.economy_receipt_count + 1
-  return true
+  count = count + 1
+  data.economy_receipt_count = count
+  data.economy_receipt_generation = index.generation + 1
+  return true, {
+    base_generation = index.generation, base_count = index.count, evicted = evicted,
+    item = { key = key, request_type = request_type, request_id = request_id },
+    generation = index.generation + 1, count = count,
+  }
+end
+
+local function apply_receipt_delta(index, delta)
+  if type(index) ~= "table" or type(delta) ~= "table"
+    or index.generation ~= delta.base_generation or index.count ~= delta.base_count
+    or #index.heap ~= index.count then return false end
+  if delta.evicted then
+    local removed = heap_pop_min(index.heap)
+    if not removed or removed.key ~= delta.evicted.key then return false end
+  elseif index.count >= MAX_ECONOMY_RECEIPTS then
+    return false
+  end
+  heap_insert(index.heap, delta.item)
+  index.generation, index.count = delta.generation, delta.count
+  return #index.heap == index.count
 end
 
 local function append_journal(data, record)
@@ -358,7 +441,43 @@ local function request_amount(value)
 end
 
 function Ledger.new(store, clock, random)
-  return setmetatable({ store = store, clock = clock or os.time, random = random or math.random }, Ledger)
+  return setmetatable({ store = store, clock = clock or os.time, random = random or math.random,
+    receipt_indexes = {}, receipt_index_clock = 0 }, Ledger)
+end
+
+function Ledger:_remember_receipt_index(guild, index)
+  if type(index) ~= "table" then return end
+  self.receipt_index_clock = self.receipt_index_clock + 1
+  local current = self.receipt_indexes[guild]
+  if not current then
+    local count, oldest_guild, oldest_used = 0, nil, math.huge
+    for key, cached in pairs(self.receipt_indexes) do
+      count = count + 1
+      if cached.last_used < oldest_used then oldest_guild, oldest_used = key, cached.last_used end
+    end
+    if count >= MAX_CACHED_RECEIPT_INDEXES then self.receipt_indexes[oldest_guild] = nil end
+  end
+  index.last_used = self.receipt_index_clock
+  self.receipt_indexes[guild] = index
+end
+
+function Ledger:_run_with_receipts(guild, callback)
+  local candidate, candidate_safe, candidate_delta
+  local ok, result = self.store:run(guild, function(data)
+    return callback(data, self.receipt_indexes[guild], function(index, safe_without_commit, delta)
+      if index then candidate, candidate_safe, candidate_delta = index, safe_without_commit, delta end
+    end)
+  end)
+  if candidate and ok then
+    if not candidate_delta or apply_receipt_delta(candidate, candidate_delta) then
+      self:_remember_receipt_index(guild, candidate)
+    elseif self.receipt_indexes[guild] == candidate then
+      self.receipt_indexes[guild] = nil
+    end
+  elseif candidate and candidate_safe then
+    self:_remember_receipt_index(guild, candidate)
+  end
+  return ok, result
 end
 
 function Ledger:balance(guild, user)
@@ -435,8 +554,9 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
     operation = kind, source = user, target = kind == "pay" and other or nil,
     amount = (kind == "pay" or kind == "deposit" or kind == "withdraw") and request_amount(input) or nil }
-  return self.store:run(guild, function(data)
-    local request_state, prior, changed, oldest = check_request(data, guild, request_type, interaction, fingerprint)
+  return self:_run_with_receipts(guild, function(data, cached, remember)
+    local request_state, prior, changed, oldest, index = check_request(data, guild, request_type, interaction, fingerprint, cached)
+    remember(index, not changed)
     if request_state ~= nil then return request_state, prior, changed end
     if kind == "pay" and (not Store.valid_id(other) or other == user) then return false, "invalid_target" end
     local a = account(data, user, true)
@@ -478,7 +598,9 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
       amount = value, counterparty = other or "", timestamp = now, status = "committed" }
     append_journal(data, record)
     local result = { id = record.id, money_id = money_id(record.id), amount = value, wallet = a.wallet, bank = a.bank }
-    if not save_receipt(data, request_type, interaction, fingerprint, result, oldest) then return false, "invalid_store" end
+    local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
+    if not saved then return false, "invalid_store" end
+    remember(index, false, receipt_delta)
     return true, result, true
   end)
 end
@@ -496,8 +618,9 @@ function Ledger:purchase(guild, user, interaction, item_id, price, quantity, req
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
     operation = "purchase", source = user, amount = total, item_id = item_id, quantity = quantity }
-  return self.store:run(guild, function(data)
-    local request_state, prior, changed, oldest = check_request(data, guild, request_type, interaction, fingerprint)
+  return self:_run_with_receipts(guild, function(data, cached, remember)
+    local request_state, prior, changed, oldest, index = check_request(data, guild, request_type, interaction, fingerprint, cached)
+    remember(index, not changed)
     if request_state ~= nil then return request_state, prior, changed end
     if not InventoryData.valid_item(item_id) then return false, "invalid_argument" end
     if not total then return false, "invalid_amount" end
@@ -513,7 +636,9 @@ function Ledger:purchase(guild, user, interaction, item_id, price, quantity, req
     append_journal(data, record)
     local result = { id = record.id, money_id = money_id(record.id), amount = total, wallet = a.wallet,
       bank = a.bank, operation = "purchase", user = user, item_id = item_id, quantity = quantity }
-    if not save_receipt(data, request_type, interaction, fingerprint, result, oldest) then return false, "invalid_store" end
+    local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
+    if not saved then return false, "invalid_store" end
+    remember(index, false, receipt_delta)
     return true, result, true
   end)
 end
@@ -530,8 +655,9 @@ function Ledger:sell(guild, user, interaction, item_id, quantity, request_type)
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
     operation = "sale", source = user, amount = total, item_id = item_id, quantity = quantity }
-  return self.store:run(guild, function(data)
-    local request_state, prior, changed, oldest = check_request(data, guild, request_type, interaction, fingerprint)
+  return self:_run_with_receipts(guild, function(data, cached, remember)
+    local request_state, prior, changed, oldest, index = check_request(data, guild, request_type, interaction, fingerprint, cached)
+    remember(index, not changed)
     if request_state ~= nil then return request_state, prior, changed end
     if not item or not total then return false, "invalid_amount" end
     local a = account(data, user, true)
@@ -547,7 +673,9 @@ function Ledger:sell(guild, user, interaction, item_id, quantity, request_type)
     local result = { id = record.id, money_id = money_id(record.id), amount = total, wallet = a.wallet,
       bank = a.bank, operation = "sale", user = user, item_id = item_id,
       quantity = quantity, price_each = item.sell_price }
-    if not save_receipt(data, request_type, interaction, fingerprint, result, oldest) then return false, "invalid_store" end
+    local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
+    if not saved then return false, "invalid_store" end
+    remember(index, false, receipt_delta)
     return true, result, true
   end)
 end
@@ -559,8 +687,9 @@ function Ledger:mine(guild, user, interaction, request_type)
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
     operation = "mine", source = user }
-  return self.store:run(guild, function(data)
-    local request_state, prior, changed, oldest = check_request(data, guild, request_type, interaction, fingerprint)
+  return self:_run_with_receipts(guild, function(data, cached, remember)
+    local request_state, prior, changed, oldest, index = check_request(data, guild, request_type, interaction, fingerprint, cached)
+    remember(index, not changed)
     if request_state ~= nil then return request_state, prior, changed end
     local a = account(data, user, true)
     if not a then return false, "invalid_store" end
@@ -593,7 +722,9 @@ function Ledger:mine(guild, user, interaction, request_type)
     local result = { id = record.id, money_id = money_id(record.id), amount = 0, wallet = a.wallet,
       bank = a.bank, operation = "mine", user = user, item_id = item_id,
       quantity = quantity, cooldown_seconds = MINING_COOLDOWN }
-    if not save_receipt(data, request_type, interaction, fingerprint, result, oldest) then return false, "invalid_store" end
+    local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
+    if not saved then return false, "invalid_store" end
+    remember(index, false, receipt_delta)
     return true, result, true
   end)
 end
@@ -601,4 +732,5 @@ end
 Ledger.mining_cooldown = MINING_COOLDOWN
 Ledger.max_journal_records = MAX_JOURNAL_RECORDS
 Ledger.max_economy_receipts = MAX_ECONOMY_RECEIPTS
+Ledger.max_cached_receipt_indexes = MAX_CACHED_RECEIPT_INDEXES
 return Ledger

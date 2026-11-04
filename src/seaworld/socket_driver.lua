@@ -27,6 +27,18 @@ local function numbers_safe(value, seen, depth)
   return true
 end
 
+local function encode_request(operation, payload, request_id)
+  if not numbers_safe(payload, {}, 0) then return nil, "invalid_argument" end
+  local body = object_copy(payload)
+  if type(body.document) == "table" and body.document ~= json.null then body.document = object_copy(body.document) end
+  if type(body.set) == "table" and body.set ~= json.null then body.set = object_copy(body.set) end
+  local ok, request = pcall(json.encode, {
+    protocol_version = "1.0.0", request_id = request_id, operation = operation, payload = body,
+  })
+  if not ok or type(request) ~= "string" then return nil, "serialization_failed" end
+  return request .. "\n"
+end
+
 local function close_handle(handle)
   if handle and not handle:is_closing() then handle:close() end
 end
@@ -44,6 +56,14 @@ end
 
 function Driver:initialize() return true end
 function Driver:connect() return true end
+
+function Driver.measure_request(operation, payload, request_id)
+  local frame, reason = encode_request(operation, payload, request_id)
+  if not frame then return nil, reason end
+  return #frame
+end
+
+Driver.max_frame_bytes = MAX_FRAME
 
 function Driver:close()
   if self.closer then self.closer() else close_handle(self.socket) end
@@ -63,22 +83,23 @@ end
 function Driver:_call(operation, payload, keep, timeout)
   if self.busy then return false, "transport_busy" end
   self.busy = true
+  local preflight_resource_limit = false
   local ok, first, second = pcall(function()
-    if not numbers_safe(payload, {}, 0) then return false, "invalid_argument" end
     local call_timeout = timeout or self.timeout
     local connected, reason = self:_open(call_timeout)
     if not connected then return false, reason end
     self.request_sequence = self.request_sequence + 1
     local id = tostring(self.request_sequence)
-    local body = object_copy(payload)
-    if type(body.document) == "table" and body.document ~= json.null then body.document = object_copy(body.document) end
-    if type(body.set) == "table" and body.set ~= json.null then body.set = object_copy(body.set) end
-    local request = json.encode({ protocol_version = "1.0.0", request_id = id, operation = operation, payload = body })
-    if not request or #request + 1 > MAX_FRAME then return false, "resource_limit" end
+    local request, encode_reason = encode_request(operation, payload, id)
+    if not request then return false, encode_reason end
+    if #request > MAX_FRAME then
+      preflight_resource_limit = true
+      return false, "resource_limit"
+    end
     local timer = uv.new_timer()
     timer:start(call_timeout, 0, function() if self.closer then self.closer() end end)
     local success, response, err = pcall(function()
-      local written = self.write(request .. "\n")
+      local written = self.write(request)
       if not written then return nil, "transport_unavailable" end
       while true do
         local newline = self.buffer:find("\n", 1, true)
@@ -106,7 +127,7 @@ function Driver:_call(operation, payload, keep, timeout)
     return true, response.result
   end)
   self.busy = false
-  if not ok or not first or not keep then self:close() end
+  if (not ok or not first or not keep) and not (preflight_resource_limit and keep) then self:close() end
   if not ok then return false, "transport_unavailable" end
   return first, second
 end

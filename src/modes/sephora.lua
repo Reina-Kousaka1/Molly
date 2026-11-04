@@ -1,5 +1,6 @@
 local Store = require("src.persistence.guild_store")
 local V2 = require("src.persistence.guild_v2")
+local ReceiptWindow = require("src.persistence.receipt_window")
 
 local Sephora = {}
 Sephora.__index = Sephora
@@ -12,6 +13,11 @@ local LOOKS = {
 }
 local MAX_USERS = 200
 local MAX_RECEIPTS = 5000
+local SEPHORA_RECEIPTS = {
+  map = "receipts", order = "receipt_order", count = "receipt_count",
+  head = "receipt_head", tail = "receipt_tail", watermark = "receipt_watermark",
+  migrated = "receipts_migrated", limit = MAX_RECEIPTS,
+}
 
 function Sephora.new(store, modes, clock)
   assert(type(store) == "table" and type(store.run) == "function", "guild store is required")
@@ -48,13 +54,20 @@ function Sephora:try_on(guild, user, look_id, request_id)
     local section, reason = V2.ensure_section(data, "sephora")
     if not section then return false, reason end
     section.fittings = section.fittings or {}
-    section.receipts = section.receipts or {}
-    if type(section.fittings) ~= "table" or type(section.receipts) ~= "table" then return false, "invalid_store" end
-    local receipt = section.receipts[request_id]
-    if receipt then
-      if type(receipt) ~= "table" or not self:is_look(receipt.look_id) then return false, "invalid_store" end
+    if type(section.fittings) ~= "table" then return false, "invalid_store" end
+    local migrated, prepare_reason = ReceiptWindow.prepare(section, SEPHORA_RECEIPTS)
+    if migrated == nil then return false, prepare_reason end
+    local receipt_status, receipt = ReceiptWindow.lookup(section, SEPHORA_RECEIPTS, request_id)
+    if receipt_status == "retained" then
+      if type(receipt) ~= "table" or not self:is_look(receipt.look_id) or not Store.valid_id(receipt.user) then
+        return false, "invalid_store"
+      end
       if receipt.user ~= user or receipt.look_id ~= look_id then return false, "replay_conflict" end
-      return true, { look_id = receipt.look_id, replayed = true }, false
+      return true, { look_id = receipt.look_id, replayed = true }, migrated
+    elseif receipt_status == "expired" then
+      return false, "replay_expired"
+    elseif receipt_status == "invalid_store" then
+      return false, "invalid_store"
     end
     local enabled, mode_reason = active(data)
     if not enabled then return false, mode_reason end
@@ -62,11 +75,11 @@ function Sephora:try_on(guild, user, look_id, request_id)
       local count = 0; for _ in pairs(section.fittings) do count = count + 1 end
       if count >= MAX_USERS then return false, "capacity" end
     end
-    local receipt_count = 0; for _ in pairs(section.receipts) do receipt_count = receipt_count + 1 end
-    if receipt_count >= MAX_RECEIPTS then return false, "receipt_capacity" end
     section.fittings[user] = { look_id = look_id, timestamp = self.clock() }
     local result = { look_id = look_id, replayed = false }
-    section.receipts[request_id] = { user = user, look_id = look_id }
+    local saved, save_reason = ReceiptWindow.add(section, SEPHORA_RECEIPTS, request_id,
+      { user = user, look_id = look_id })
+    if not saved then return false, save_reason end
     return true, result, true
   end)
 end

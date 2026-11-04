@@ -5,65 +5,63 @@ never mistaken for a CI pass.
 
 ## CI: plain Lua 5.1 and Python
 
-Run the same self-contained suites as GitHub Actions from the repository root:
+Run the self-contained suites from the repository root:
 
 ```sh
-LUA_BIN=lua5.1 PYTHON_BIN=python3 tests/run_ci.sh
+LUA_BIN=lua5.1 LUAC_BIN=luac5.1 PYTHON_BIN=python3 tests/run_ci.sh
 ```
 
-`LUA_BIN` and `PYTHON_BIN` may be overridden with local executable paths. The
-runner first parses `molly.lua` and every Lua file under `src/` and `tests/`
-with `luac5.1 -p` (override with `LUAC_BIN`), then includes:
+The runner parses `molly.lua` and every Lua file under `src/` and `tests/`, then
+runs the repository unit suites, isolated SeaWorld-driver mocks, the default
+synthetic ledger stress profile, and the Python Lavalink environment-transfer
+test. The Lua and Python tests use in-memory fakes or mocked transports; they do
+not connect to Discord, Lavalink, or SeaWorld.
 
-- `tests/test.lua`
-- `tests/developer_lifecycle.lua`
-- `tests/v2.lua`
-- `tests/community.lua`
-- `tests/economy_v2.lua`
-- `tests/observability.lua`
-- `tests/music_voice.lua`
-- `tests/moderation_v2.lua`
-- `tests/sprint.lua`
-- `tests/economy_commands.lua`
-- `tests/prefix_commands.lua`
-- `tests/embeds.lua`
-- `tests/stress.lua` (synthetic in-memory ledger and journal-rotation benchmarks;
-  no SeaWorld connection; the CI ledger profile reaches 100, 500, 1,000, 5,000,
-  and 10,000 bookings, while the rotation microbenchmark reaches 100,000
-  appends)
+`tests/seaworld_driver.lua` verifies the client's 1,048,576-byte request and
+response frame boundary, counting the terminating newline. It tests the exact
+limit and one byte over, UTF-8 byte counts, `resource_limit` propagation, and
+rollback using isolated fake sessions and sockets. These tests verify Molly's
+client behavior only; they do not establish SeaWorld's configured limit or
+server-side transaction semantics.
 
-Run the extended 100,000-operation profile explicitly with
-`MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua`. This profile is intentionally not
-part of the per-commit CI gate because the first full run exceeded its 30-minute
-job timeout while exercising the current full receipt-validation path. Its
-timeout is an incomplete benchmark, never a pass or a SeaWorld result.
+`tests/stress.lua`'s default profile covers 100, 500, 1,000, 5,000, and 10,000
+synthetic ledger operations. It also compares journal rotation implementations
+at up to 100,000 appends. For the extended 100,000-operation ledger profile run:
 
-The Python test `tests/lavalink_env_transfer.py` uses the standard library and
-exercises the environment-configuration helper without Docker or live
-credentials. These CI tests use fakes/mocks and do not connect to Discord,
-Lavalink, or SeaWorld.
+```sh
+MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua
+```
+
+This is an in-memory Lua benchmark. It exercises ledger receipt validation,
+retention, and the bounded receipt-index cache, but excludes JSON serialization,
+sockets, SeaWorld commit latency, and process restarts. The latest measured
+100,000-operation run completed in 11.088 seconds (about 9,019 operations per
+second; p95 0.182 ms, p99 0.320 ms, maximum 11.756 ms), ending with 100,000
+accounts, 1,000 journal rows, and 1,000 receipts. This is not a SeaWorld
+performance result.
 
 ## Luvit and library-dependent tests
 
-`tests/lavalink_client.lua` requires Luvit's `json` module; its HTTP and WebSocket
-transports are mocked, so no live Lavalink service is needed. It was previously
-left out of CI because plain Lua in the test environment did not provide
-`json`.
-
-`tests/discord_registration.lua` requires Luvit and the `discord.lua` library
-available on `package.path` (the repository's expected local path is `deps/`).
-It uses a mocked client and does not log in to Discord.
-
-Run both with:
+`tests/run_luvit.sh` runs the Luvit JSON frame-boundary test, mocked Lavalink
+client tests, and mocked Discord registration tests. Run it with a Luvit
+runtime and required Lua modules on the runtime's normal search path:
 
 ```sh
 LUVIT_BIN=./runtime/luvit tests/run_luvit.sh
 ```
 
-The runner uses `./runtime/luvit` when present, otherwise `luvit` on `PATH`; set
-`LUVIT_BIN` to select another executable. Supply the required Lua modules in the
-normal Luvit search path. This group is not part of GitHub Actions unless those
-runtime dependencies are deliberately provisioned there.
+The frame-boundary test was run against upstream Luvit's JSON encoder: an
+exactly 1,048,576-byte newline-terminated request was accepted, a request one
+byte larger was rejected before any socket write, and the same exact/oversized
+checks were made for responses. This measures Molly's serialized synthetic
+frames using that encoder. It is not a live SeaWorld test. The complete Luvit
+runner was not verified because the required `discord.lua` module was not
+available; Lavalink and frame tests were run separately with their dependencies.
+
+`tests/lavalink_client.lua` mocks its HTTP and WebSocket transports; it needs
+Luvit's `json` module but no live Lavalink service. `tests/discord_registration.lua`
+needs Luvit and `discord.lua` on `package.path` (the expected repository-local
+path is `deps/`) and uses a mocked client without logging into Discord.
 
 ## SeaWorld integration tests
 
@@ -88,4 +86,5 @@ Replace `economy` with `seaworld` and select the corresponding phase as needed.
 The `verify`/`reopen` phase must use the same test database after restarting the
 service. `unavailable` is run while that disposable service is stopped. The
 runner refuses to execute without the explicit disposable-service confirmation
-and socket path. No integration test is run by CI.
+and socket path. No live SeaWorld integration, server-side frame-limit check,
+rollback-after-oversize check, or cross-process concurrency test has been run.

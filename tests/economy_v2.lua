@@ -270,7 +270,8 @@ test("journal rotation permits new writes after 1,000 records and survives reloa
   assert(ok, "the 1,001st ledger operation must succeed")
   last_id, last_result = request_id, result
   assert(#state.data["80"].journal == Ledger.max_journal_records)
-  assert(state.data["80"].economy_receipt_count == Ledger.max_journal_records + 1)
+  assert(state.data["80"].economy_receipt_count == math.min(Ledger.max_journal_records + 1,
+    Ledger.max_economy_receipts))
   local found, lookup = service:transaction("80", first_money_id)
   assert(not found and lookup == "transaction_not_found", "lookup is guaranteed only while the row is retained")
   found, lookup = service:transaction("80", last_result.money_id)
@@ -330,6 +331,54 @@ test("economy receipts stay bounded and expired request IDs fail closed after re
   ok = after_restart:change("81", "71", new_id, "daily")
   assert(ok and reloaded.data["81"].economy_receipt_count == Ledger.max_economy_receipts)
   assert(#reloaded.data["81"].journal == Ledger.max_journal_records)
+end)
+
+test("ledger receipt index avoids rescanning its persisted map on every mutation", function()
+  local data = { guild = "89", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  local store = { run = function(_, _, fn)
+    local ok, result, changed = fn(data)
+    return ok, result, changed
+  end }
+  local now = 0
+  local service = Ledger.new(store, function() now = now + 86400; return now end)
+  for index = 1, 100 do
+    local ok = service:change("89", "70", tostring(7000000 + index), "daily")
+    assert(ok)
+  end
+  local receipt_map, visits, original_pairs = data.economy_receipts, 0, pairs
+  pairs = function(value)
+    if value == receipt_map then visits = visits + 1 end
+    return original_pairs(value)
+  end
+  local ran, reason = pcall(function()
+    for index = 101, 200 do
+      local ok, result = service:change("89", "70", tostring(7000000 + index), "daily")
+      assert(ok, tostring(result))
+    end
+  end)
+  pairs = original_pairs
+  assert(ran, reason)
+  assert(visits == 0, "warm receipt checks and additions must use the bounded per-guild heap index")
+  assert(data.economy_receipt_count == 200)
+end)
+
+test("ledger receipt index invalidates on generation changes and stays bounded across guilds", function()
+  local isolated, now = memory_guild_store(), 0
+  local clock = function() now = now + 86400; return now end
+  local first = Ledger.new(isolated, clock)
+  local second = Ledger.new(isolated, clock)
+  assert(first:change("95", "70", "8000000001", "daily"))
+  assert(second:change("95", "70", "8000000002", "daily"))
+  assert(first:change("95", "70", "8000000003", "daily"))
+  local data = isolated.data["95"]
+  assert(data.economy_receipt_count == 3 and data.accounts["70"].wallet == 300,
+    "a stale local index must rebuild after another Ledger instance commits")
+  for index = 1, 12 do
+    local guild = tostring(1000 + index)
+    assert(first:change(guild, "71", tostring(9000000000 + index), "daily"))
+  end
+  local cached = 0; for _ in pairs(first.receipt_indexes) do cached = cached + 1 end
+  assert(cached <= Ledger.max_cached_receipt_indexes and Ledger.max_cached_receipt_indexes == 8)
 end)
 
 test("economy balances and matching request IDs remain isolated across guilds", function()
@@ -414,6 +463,70 @@ test("fashion is guild-isolated, requires ownership, and enforces the selected s
   assert(not disabled and reason == "shop_disabled")
   local unavailable, mode_reason = shop:buy("20", "201", "505", "citrus_satin", 1)
   assert(not unavailable and mode_reason == "virtual_mode")
+end)
+
+test("Sephora receipts migrate, rotate at 5,000, and remain replay-safe through 10,000 requests", function()
+  local function sephora_data(guild)
+    return { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
+      molly_v2 = { schema_version = 1, settings = { guild = { mode = "sephora" } },
+        sephora = { fittings = {}, receipts = {} } } }
+  end
+  local state = { data = { ["92"] = sephora_data("92") } }
+  function state:run(guild, fn)
+    local data = self.data[guild]
+    local ok, result, changed = fn(data)
+    if ok and changed then self.data[guild] = data end
+    return ok, result
+  end
+  local modes = { get = function() return true, { mode = "sephora" } end }
+  local tick = 0
+  local service = Sephora.new(state, modes, function() tick = tick + 1; return tick end)
+  local function id(index) return "100000000000000" .. string.format("%05d", index) end
+  local first_id, latest
+  for index = 1, 5000 do
+    local request = id(index)
+    local ok, result = service:try_on("92", "7", "rose_glow", request)
+    assert(ok and not result.replayed)
+    if index == 1 then first_id = request end
+    latest = request
+  end
+  local section = state.data["92"].molly_v2.sephora
+  assert(section.receipt_count == Sephora.max_receipts and #section.receipt_order == Sephora.max_receipts)
+  assert(section.receipt_watermark == "")
+  local stamp = section.fittings["7"].timestamp
+  local replayed, result = service:try_on("92", "7", "rose_glow", latest)
+  assert(replayed and result.replayed and section.fittings["7"].timestamp == stamp)
+  local conflict, conflict_reason = service:try_on("92", "7", "citrus_satin", latest)
+  assert(not conflict and conflict_reason == "replay_conflict")
+
+  for index = 5001, 10000 do
+    local request = id(index)
+    local ok = service:try_on("92", "7", index % 2 == 0 and "rose_glow" or "citrus_satin", request)
+    assert(ok, "receipt rotation must not permanently lock fittings")
+    latest = request
+  end
+  section = state.data["92"].molly_v2.sephora
+  assert(section.receipt_count == Sephora.max_receipts and #section.receipt_order == Sephora.max_receipts)
+  assert(section.receipts[first_id] == nil and section.receipt_watermark == id(5000))
+  local fitting_before = section.fittings["7"].look_id
+  local reloaded = { data = { ["92"] = clone(state.data["92"]) } }
+  function reloaded:run(guild, fn)
+    local data = self.data[guild]
+    local ok, value, changed = fn(data)
+    if ok and changed then self.data[guild] = data end
+    return ok, value
+  end
+  local after_restart = Sephora.new(reloaded, modes, function() return 99999 end)
+  local expired, expired_reason = after_restart:try_on("92", "7", "rose_glow", first_id)
+  assert(not expired and expired_reason == "replay_expired")
+  assert(reloaded.data["92"].molly_v2.sephora.fittings["7"].look_id == fitting_before)
+  local retained, retained_result = after_restart:try_on("92", "7", fitting_before, latest)
+  assert(retained and retained_result.replayed)
+  local guild_two = sephora_data("93")
+  reloaded.data["93"] = guild_two
+  local other_guild = after_restart:try_on("93", "7", "rose_glow", first_id)
+  assert(other_guild and guild_two.molly_v2.sephora.receipts[first_id],
+    "a request ID in one guild must not leak receipts or fittings into another")
 end)
 
 test("inventory data rejects over-capacity and malformed mutations", function()
