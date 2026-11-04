@@ -143,23 +143,66 @@ function Sync.run(bot, options)
     return false, "migration_requires_controlled_transport", { command = migrations[1].name }
   end
   local writer = options.write or require('src.discord.sync_transport').write
+  local pending_wait_ms = 0
+  local function await_bucket()
+    if pending_wait_ms == 0 then return true end
+    local wait = options.wait or require('src.discord.sync_transport').wait
+    local duration = pending_wait_ms
+    pending_wait_ms = 0
+    return wait(duration) == true
+  end
+  local function note_bucket(details)
+    if type(details) == 'table' and details.rate_limit_remaining == 0
+      and type(details.rate_limit_reset_ms) == 'number' and details.rate_limit_reset_ms >= 0 then
+      pending_wait_ms = details.rate_limit_reset_ms + 25
+    end
+  end
   for _, update in ipairs(updates) do
-    local changed, failure = writer(bot, 'PATCH', endpoint .. "/" .. update.id, update.spec)
-    if not changed then return false, failure == 'failed' and 'write_failed' or 'outcome_unknown', { command = update.name } end
+    if not await_bucket() then return false, 'rate_limit_wait_exceeded', { command = update.name } end
+    local changed, failure, diagnostics = writer(bot, 'PATCH', endpoint .. "/" .. update.id, update.spec)
+    if not changed then
+      diagnostics = type(diagnostics) == 'table' and diagnostics or {}; diagnostics.command = update.name
+      return false, failure == 'failed' and 'write_failed' or 'outcome_unknown', diagnostics
+    end
     if type(changed) ~= "table" or changed.id ~= update.id or changed.name ~= update.name
       or difference(update.spec, changed, "") ~= nil then
       return false, "outcome_unknown", { command = update.name, field = "description" }
     end
     existing[update.key] = changed
+    note_bucket(diagnostics)
   end
+  local created_count, skipped_count = 0, 0
   for _, spec in ipairs(missing) do
-    local created, failure = writer(bot, 'POST', endpoint, spec)
-    if not created then return false, failure == 'failed' and 'write_failed' or 'outcome_unknown', { command = spec.name } end
-    if type(created) ~= "table" or created.name ~= spec.name or type(created.id) ~= "string" or not created.id:match('^%d+$')
-      or difference(spec, created, "") ~= nil then
-      return false, "outcome_unknown", { command = spec.name }
+    -- Discord POST is an upsert. Refresh immediately before each create so a
+    -- command created since preflight is not inadvertently overwritten.
+    local fresh = bot.http:get(endpoint)
+    if type(fresh) ~= 'table' then return false, 'remote_unavailable', { command = spec.name } end
+    local found
+    for _, candidate in ipairs(fresh) do
+      if (candidate.type or 1) == (spec.type or 1) and candidate.name == spec.name then
+        if found then return false, 'remote_duplicate_command', { command = spec.name } end
+        found = candidate
+      end
+    end
+    if found then
+      local field = difference(spec, found, '', true)
+      if field then return false, 'command_conflict', { command = spec.name, field = field } end
+      skipped_count = skipped_count + 1
+    else
+      if not await_bucket() then return false, 'rate_limit_wait_exceeded', { command = spec.name } end
+      local created, failure, diagnostics = writer(bot, 'POST', endpoint, spec)
+      if not created then
+        diagnostics = type(diagnostics) == 'table' and diagnostics or {}; diagnostics.command = spec.name
+        return false, failure == 'failed' and 'write_failed' or 'outcome_unknown', diagnostics
+      end
+      if type(created) ~= "table" or created.name ~= spec.name or type(created.id) ~= "string" or not created.id:match('^%d+$')
+        or difference(spec, created, "") ~= nil then
+        return false, "outcome_unknown", { command = spec.name }
+      end
+      created_count = created_count + 1
+      note_bucket(diagnostics)
     end
   end
-  return true, { updated = #updates, created = #missing, migrated = #migrations }
+  return true, { updated = #updates, created = created_count, skipped = skipped_count, migrated = #migrations }
 end
 return Sync

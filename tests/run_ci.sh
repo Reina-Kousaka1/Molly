@@ -25,6 +25,7 @@ for suite in \
   tests/command_registration_all.lua \
   tests/command_migration.lua \
   tests/discord_sync_state.lua \
+  tests/discord_sync_resume.lua \
   tests/embeds.lua
 do
   "$LUA_BIN" "$suite"

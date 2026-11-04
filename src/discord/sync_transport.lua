@@ -30,6 +30,7 @@ function Transport.write(bot, method, path, body, deadline_ms)
       exited = true; finish()
     end)
   if not proc then close(timer); close(stdin); close(stdout); return nil, 'failed' end
+  uv.update_time()
   timer:start(deadline_ms or 12000, 0, function() timed_out = true; if not proc:is_closing() then proc:kill('sigkill') end end)
   stdout:read_start(function(err, data)
     if err then timed_out = true end
@@ -47,8 +48,36 @@ function Transport.write(bot, method, path, body, deadline_ms)
   if failure then return nil, failure end
   local decoded, pos, err = json.decode(raw or '')
   if err or type(decoded) ~= 'table' or type(pos) ~= 'number' or (raw or ''):sub(pos):find('%S') then return nil, 'unknown' end
-  if decoded.state == 'success' and type(decoded.value) == 'table' then return decoded.value end
-  if decoded.state == 'failed' then return nil, 'failed' end
-  return nil, 'unknown'
+  local details = {}
+  if type(decoded.http_status) == 'number' and decoded.http_status >= 100 and decoded.http_status <= 599
+    and decoded.http_status % 1 == 0 then details.http_status = decoded.http_status end
+  if type(decoded.discord_code) == 'number' and decoded.discord_code >= 0 and decoded.discord_code <= 99999999
+    and decoded.discord_code % 1 == 0 then details.discord_code = decoded.discord_code end
+  if type(decoded.retry_after_ms) == 'number' and decoded.retry_after_ms >= 0 and decoded.retry_after_ms <= 86400000
+    and decoded.retry_after_ms % 1 == 0 then details.retry_after_ms = decoded.retry_after_ms end
+  if type(decoded.rate_limit_remaining) == 'number' and decoded.rate_limit_remaining >= 0 and decoded.rate_limit_remaining <= 100000
+    and decoded.rate_limit_remaining % 1 == 0 then details.rate_limit_remaining = decoded.rate_limit_remaining end
+  if type(decoded.rate_limit_reset_ms) == 'number' and decoded.rate_limit_reset_ms >= 0 and decoded.rate_limit_reset_ms <= 86400000
+    and decoded.rate_limit_reset_ms % 1 == 0 then details.rate_limit_reset_ms = decoded.rate_limit_reset_ms end
+  local safe_messages = { ['Invalid Form Body'] = true, ['Missing Access'] = true, ['Missing Permissions'] = true,
+    ['You are being rate limited.'] = true, ['Unknown Application'] = true, ['Unknown Command'] = true,
+    ['Maximum number of application commands reached'] = true }
+  if safe_messages[decoded.discord_message] then details.discord_message = decoded.discord_message end
+  if decoded.state == 'success' and type(decoded.value) == 'table' then return decoded.value, nil, details end
+  if decoded.state == 'failed' then return nil, 'failed', details end
+  return nil, 'unknown', details
+end
+
+function Transport.wait(milliseconds)
+  local thread = coroutine.running()
+  if not thread or type(milliseconds) ~= 'number' or milliseconds < 0 or milliseconds > 60000 then return false end
+  uv.update_time()
+  local timer = uv.new_timer()
+  timer:start(milliseconds, 0, function()
+    timer:close()
+    local ok, err = coroutine.resume(thread, true)
+    if not ok then error(err, 0) end
+  end)
+  return coroutine.yield()
 end
 return Transport

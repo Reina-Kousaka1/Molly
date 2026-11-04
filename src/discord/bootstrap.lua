@@ -61,6 +61,10 @@ function Bootstrap:build()
             detail = call_ok and outcome or "request_failed",
             command = details.command,
             field = details.field,
+            http_status = details.http_status,
+            discord_code = details.discord_code,
+            discord_message = details.discord_message,
+            retry_after_ms = details.retry_after_ms,
           })
         end
         return false
@@ -73,6 +77,7 @@ function Bootstrap:build()
           registered = #bot.command_tree.commands,
           updated_descriptions = outcome.updated or 0,
           created = outcome.created or 0,
+          skipped = outcome.skipped or 0,
         })
       end
       return true

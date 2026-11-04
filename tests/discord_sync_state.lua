@@ -46,4 +46,32 @@ do
   assert(state:begin() and not state:begin() and state.status == 'running')
   assert(state:finish(false, 'outcome_unknown') and not state:begin() and state.status == 'unknown')
 end
+do
+  local Sync = require('src.discord.safe_sync')
+  local bot = { client = { get_application_id = function() return '1' end }, http = { get = function() return {} end },
+    command_tree = { commands = { { to_dict = function() return { type = 1, name = 'logs', description = 'test' } end } } } }
+  local writes = 0
+  local ok, reason, details = Sync.run(bot, { write = function()
+    writes = writes + 1
+    return nil, 'failed', { http_status = 429, discord_code = 0, discord_message = 'You are being rate limited.' }
+  end })
+  assert(not ok and reason == 'write_failed' and details.command == 'logs' and details.http_status == 429
+    and details.discord_code == 0 and details.discord_message == 'You are being rate limited.' and writes == 1)
+end
+do
+  local record
+  local fake = { http = { get = function() return {} end }, client = { get_application_id = function() return '1' end },
+    command_tree = { commands = { { to_dict = function() return { type = 1, name = 'logs', description = 'test' } end } } } }
+  function fake:on() end
+  function fake:slash_command() end
+  local boot = Bootstrap.new({ discord = { Bot = function() return fake end }, app = {},
+    commands = { list = function() return {} end },
+    logger = { error = function(_, _, fields) record = fields end },
+    sync_write = function() return nil, 'failed', { http_status = 429, discord_code = 0,
+      discord_message = 'You are being rate limited.', retry_after_ms = 1250, secret = 'private-fixture' } end }):build()
+  assert(not fake:sync_commands() and boot.sync_state.status == 'failed')
+  assert(record.http_status == 429 and record.discord_code == 0 and record.retry_after_ms == 1250
+    and record.discord_message == 'You are being rate limited.' and record.secret == nil)
+  assert(not fake:sync_commands())
+end
 print('PASS sync state: success, failure, unknown, reconnect, repeated ready, single writer')
