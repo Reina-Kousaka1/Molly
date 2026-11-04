@@ -13,6 +13,8 @@ She combines a modular Discord command layer with persistent guild data through 
 
 ## Features
 
+The standalone companion website is in [`website/`](website/README.md). It uses only verified Molly command/catalog data; its dashboard stays disabled until Molly has a permission-checked bot API.
+
 ### Moderation
 
 Molly provides moderation foundations for common guild-management workflows, including moderation cases and persistent guild-scoped state. The command layer is designed around Discord interactions with centralized response handling and safe command synchronization.
