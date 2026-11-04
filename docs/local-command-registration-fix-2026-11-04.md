@@ -158,3 +158,18 @@ subcommands with the exact global command ID; no POST, DELETE, or bulk overwrite
 during the migration; metadata preservation; successful subsequent normal
 sync; and refusal when the remote legacy signature has changed. The migration
 is test-only validated and no Discord command was changed.
+
+## Current prepared state
+
+- Full `tests/run_ci.sh` and `tests/run_luvit.sh` passed after the migration
+  implementation; isolated tests passed inside the new image with network
+  disabled and no Discord login.
+- Prepared image:
+  `molly:v2-permissions-migration-validated-2026-11-04`, ARM64,
+  `sha256:b8d52787ad30ae3eb61a07b5fa12ce02716e03f83459b8531bb34bf22a0d3c13`.
+- The production environment does not set `MOLLY_MIGRATE_PERMISSIONS_COMMAND`;
+  its default remains false. The bot remains stopped on the preceding image.
+- The code is on GitHub branch `fix/permissions-command-schema-migration` at
+  commit `3384565117282f4d183a047c33c07d2e66daf2a6`. `main` remains at the
+  approved baseline. No pull request was opened and no Discord migration or
+  production start was performed.
