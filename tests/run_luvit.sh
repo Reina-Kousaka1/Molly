@@ -20,5 +20,6 @@ fi
 "$LUVIT_BIN" tests/lavalink_client.lua
 "$LUVIT_BIN" tests/discord_registration.lua
 "$LUVIT_BIN" tests/discord_sync_transport.lua
+"$LUVIT_BIN" tests/sephora_status.lua
 env -i PATH="$PATH" LUA_PATH="${LUA_PATH-}" MOLLY_DISCORD_TOKEN=fixture \
   MOLLY_SEAWORLD_SOCKET=/fake "$LUVIT_BIN" tests/isolated_molly_start.lua

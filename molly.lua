@@ -27,6 +27,7 @@ local MusicManager = require("src.music.manager")
 local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
+local GuildStatus = require("src.presence.guild_status")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local PermissionEngine = require("src.permissions.engine")
@@ -74,6 +75,9 @@ local guild_settings = GuildSettings.new(store)
 local user_settings = UserSettings.new(global_store)
 local content_policy = ContentPolicy.new(guild_settings, { user_settings = user_settings })
 local modes = Modes.new(guild_settings)
+local guild_status = GuildStatus.new({ store = store, modes = modes, logger = logger,
+  interval_ms = config.status.sephora_interval_ms,
+  schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval })
 local sephora = Sephora.new(store, modes)
 local ledger = Ledger.new(store)
 local inventory = Inventory.new(store)
@@ -115,7 +119,10 @@ end
 local function bind_client_events(client)
   assert(client and type(client.on) == "function", "Discord client is required")
   dynamic_voice:set_runtime(client.rest, client, nil)
+  guild_status:set_client(client)
   client:on("guild_create", function(guild) dynamic_voice:on_guild_create(guild); music_panel:recover(guild.id) end)
+  client:on("guild_create", function(guild) guild_status:recover(guild.id) end)
+  client:on("guild_delete", function(guild) if not guild.unavailable then guild_status:forget(guild.id) end end)
   local bound, reason = community_events:bind(client, bootstrap.bot)
   if not bound then logger:warn("community_events_unavailable", { detail = reason or "binding_failed" }) end
 end
@@ -127,7 +134,7 @@ RegisterCommands.register(commands, {
   guild_settings = guild_settings, shop = shop, inventory = inventory, mining = mining,
   fashion = fashion, modes = modes, sephora = sephora, content_policy = content_policy,
   user_settings = user_settings, store = store, action_log = action_log,
-  music_manager = music_manager, music_panel = music_panel, dynamic_voice = dynamic_voice,
+  music_manager = music_manager, music_panel = music_panel, dynamic_voice = dynamic_voice, guild_status = guild_status,
   developers = config.developers, blacklist = blacklist, developer = Developer.new({ ledger = ledger,
     store = store, inventory = inventory, metrics = metrics, seaworld = sea_world,
     started_at = function() return app.started_at end }),
@@ -137,7 +144,7 @@ RegisterCommands.register(commands, {
   on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end,
 })
 bootstrap = DiscordBootstrap.new({ discord = discord, intents = gateway_intents, app = app, commands = commands,
-  logger = logger, presence = presence, on_client = bind_client_events,
+  logger = logger, presence = presence, guild_status = guild_status, on_client = bind_client_events,
   allow_permissions_options_migration = config.discord.migrate_permissions_command }):build()
 local prefix_registered, prefix_reason = prefix_commands:register(bootstrap.bot)
 if not prefix_registered then

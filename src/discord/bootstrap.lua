@@ -23,6 +23,7 @@ function Bootstrap.new(options)
     commands = options.commands,
     logger = options.logger,
     presence = options.presence,
+    guild_status = options.guild_status,
     on_client = options.on_client,
     allow_permissions_options_migration = options.allow_permissions_options_migration == true,
     sync_state = SyncState.new(),
@@ -88,6 +89,7 @@ function Bootstrap:build()
     self.bot.get_application_context = function(bot, interaction, ...)
       local context = original(bot, interaction, ...)
       context.member = interaction.member
+      context.channel_id = interaction.channel_id
       context.app_permissions = interaction.app_permissions
       context.resolved = interaction.data and interaction.data.resolved or {}
       local first = interaction.data and interaction.data.options and interaction.data.options[1]
@@ -103,6 +105,7 @@ function Bootstrap:build()
   end
   self.events:on("ready", function()
     if self.presence then self.presence:start() end
+    if self.guild_status then self.guild_status:start() end
     self.spawn(function() self.app:on_ready() end)
   end)
   self.events:on("disconnect", function() self.app:on_disconnect() end)
@@ -172,6 +175,7 @@ function Bootstrap:shutdown(signal)
     return false
   end
   if self.presence then self.presence:stop() end
+  if self.guild_status then self.guild_status:stop() end
   if type(self.bot.stop) == "function" then
     self.bot:stop()
   elseif type(self.bot.close) == "function" then

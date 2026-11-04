@@ -31,10 +31,16 @@ function Commands.register(router, modes, options)
       if selected ~= "standard" and selected ~= "sephora" then Util.reply(ctx, "Choose standard or sephora."); return end
       local ok = modes:set(guild, selected)
       if not ok then Util.reply(ctx, "Server mode could not be saved."); return end
+      local status_ok = true
+      if options.guild_status then
+        local channel_id = ctx.channel_id or (ctx.channel and ctx.channel.id)
+        status_ok = options.guild_status:apply(guild, channel_id, selected)
+      end
       if options.logs then options.logs:record(guild, "settings", "Server mode changed to " .. selected .. ".") end
       local response = selected == "sephora"
         and "Virtual Sephora mode is active for this server. Its looks are fictional, cosmetic, and free; no purchases or payments are involved."
         or "Standard mode is active. The existing server economy and ledger remain unchanged."
+      if not status_ok then response = response .. " The server status message could not be updated; check the channel and my permissions." end
       Util.reply(ctx, response)
     end,
   })
