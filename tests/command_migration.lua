@@ -10,6 +10,9 @@ local definition = router.commands.permissions
 assert(definition and definition.permission == "manage_guild")
 assert(definition.default_member_permissions == nil,
   "the migration must preserve the existing Discord default permission metadata")
+local allowed, denial = router:authorize("permissions", { member = { permissions = "0" } })
+assert(not allowed and denial == "permission_denied",
+  "router authorization must enforce Manage Server even without Discord default permission metadata")
 local local_spec = {
   name = definition.name, type = 1, description = definition.description,
   options = definition.options,
