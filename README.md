@@ -23,7 +23,7 @@ The economy layer provides persistent guild/user state and transaction-oriented 
 
 The implementation is designed to preserve request correlation and avoid reporting successful writes when persistence fails.
 
-Economy receipts keep their original `E<interaction-id>` journal key for slash-command idempotency and backward compatibility. Prefix requests use `message:<message-id>` receipt keys and `EP<message-id>` journal IDs, so they cannot collide with interaction receipts. Molly derives shorter base-36 Money IDs (`M...` for interactions and `Mp-...` for messages); `/transactions` shows them, `/transaction id:<id>` looks them up within the current server, and existing `E...` IDs remain accepted.
+Slash and prefix economy requests use separate namespaced idempotency receipts; legacy economy receipts are read and migrated lazily. Canonical journal IDs remain `E<interaction-id>` for slash commands and `EP<message-id>` for prefixes. The ledger retains up to 5,000 economy receipts per guild and rejects expired IDs rather than replaying old actions. Its journal rotates at 1,000 rows, so transaction lookup is limited to retained history. Molly derives shorter base-36 Money IDs (`M...` for interactions and `Mp-...` for messages); `/transactions` shows them and `/transaction id:<id>` looks them up within the current server. See [economy retention](docs/v2-economy-modes.md#economy-commands) for details.
 
 ### Staff management
 
@@ -31,9 +31,11 @@ Molly includes a staff directory and staff-management domain alongside moderatio
 
 ### Music
 
-Molly has a Lavalink v4 music foundation with support for YouTube-backed search and Spotify resolution through LavaSrc when configured.
+Molly has a Lavalink v4 music foundation with support for YouTube-backed search and Spotify resolution through LavaSrc when configured. Registered commands cover playback, track search, bounded queue controls, now-playing status, and persistent music panels. The runtime caps active sessions at 500, upcoming tracks at 50 (25 added per request), and bounds pending callbacks and panel caches; voice-handshake callbacks coalesce to the latest state and saturated Lavalink queues trigger bounded playback recovery.
 
-The repository contains the Lavalink client/adapter and the operational configuration used by Molly's Compose stack. Music configuration remains isolated from the core bot so deployments without a valid music configuration can fail safely rather than leaking credentials.
+`/voice` configures Join-to-Create rooms and owner controls for rooms created by Molly. Runtime tracking is capped at 500 guilds and 5,000 active voice members per guild, with 100 temporary rooms per guild and bounded pending callbacks. It verifies the trigger channel's category and fails closed on cleanup when member tracking is incomplete, callback buffers overflow, or Discord cannot confirm a deletion.
+
+The repository contains the Lavalink client/adapter and the operational configuration used by Molly's Compose stack. Music configuration remains isolated from the core bot so deployments without a valid music configuration can fail safely rather than leaking credentials. Playback requires a reachable Lavalink v4 service; deployment-specific `discord.lua` REST and voice contracts still require rollout verification.
 
 ### Discord interaction layer
 
@@ -43,7 +45,13 @@ Molly uses a centralized interaction/response layer for command acknowledgements
 
 Molly has her own presence/personality layer rather than borrowing status text from other bots. Seasonal presentation may change independently of the underlying moderation, economy, staff, and music behavior.
 
-Molly supports guild-only message commands through the same central router and command handlers used by slash commands. The default prefix is `.`; `.money` aliases the balance handler. Economy commands include `.balance`, `.bank`, `.daily`, `.weekly`, `.work`, `.deposit`, `.withdraw`, `.pay`, `.transactions`, and `.leaderboard`. Informational commands include `.uptime`, `.botinfo`, `.channelinfo`, `.help`, and `.about`. Guild managers can use `/settings prefix show|set|reset` and `/settings economy show|currency-name|currency-symbol|reset`. Prefixes are persisted per guild (printable ASCII, 1–8 characters); economy currency display settings are also guild-scoped and never change stored amounts. Prefix handling requires Discord's privileged **Message Content** Gateway Intent to be enabled in the Developer Portal as well as requested by Molly; this repository change does not enable it in the Portal.
+Molly supports guild-only message commands through the same central router and command handlers used by slash commands. The default prefix is `.`; `.money` aliases the balance handler, and fixed `.d`/`.hb` shortcuts expose message purge and confirmed hackban. Economy commands include `.balance`, `.bank`, `.daily`, `.weekly`, `.work`, `.deposit`, `.withdraw`, `.pay`, `.transactions`, and `.leaderboard`. Informational commands include `.uptime`, `.botinfo`, `.channelinfo`, `.help`, and `.about`. Guild managers can use `/settings prefix show|set|reset` and `/settings economy show|currency-name|currency-symbol|reset`. Prefixes are persisted per guild (printable ASCII, 1–8 characters); economy currency display settings are also guild-scoped and never change stored amounts. Prefix handling requires Discord's privileged **Message Content** Gateway Intent to be enabled in the Developer Portal as well as requested by Molly; this repository change does not enable it in the Portal.
+
+### Guild permissions and community features
+
+The V2 foundation adds guild-isolated modular settings, a central command permission engine, welcome/goodbye messages, event logs, per-guild AFK statuses, safe self-assignable roles, and a reaction starboard. Guild overrides cannot grant developer, protected, or admin access; `MOLLY_DEVELOPER_IDS` remains authoritative. New features default off where they publish messages or change guild roles, and use bounded state. See [docs/v2-community.md](docs/v2-community.md) for community features and [docs/v2-economy-modes.md](docs/v2-economy-modes.md) for inventory, the opt-in shop, mining, fashion, virtual Sephora mode, mature-content policy and optional user preferences.
+
+Automatic welcome/goodbye delivery and member-count tracking require the privileged `GUILD_MEMBERS` Gateway Intent. It remains opt-in (`MOLLY_GUILD_MEMBERS_INTENT=false` by default) and must also be enabled in the Discord Developer Portal. Prefix commands separately require the Message Content intent.
 
 ## Architecture
 
@@ -163,28 +171,13 @@ Do not start two Molly instances with the same Discord token. In particular, a l
 
 ## Tests
 
-The repository contains a self-contained Lua test runner:
-
-```sh
-lua5.1 tests/test.lua
-```
-
-The suite covers Molly's core modules and contracts, including Discord routing/response behavior, configuration, persistence boundaries, economy/moderation/staff behavior, music adapters, and failure handling as those areas evolve.
-
-Tests that require a real external service should remain isolated from production resources.
+See [`docs/testing.md`](docs/testing.md) for the complete classification and commands. The CI-safe Lua 5.1 suites and `tests/embeds.lua`, plus the standalone Python configuration test, run without Discord, Lavalink, or SeaWorld services. `tests/run_luvit.sh` runs the two Luvit/dependency-based suites. SeaWorld integration checks are separate and require an explicitly confirmed disposable test service; never point them at production.
 
 ## Continuous Integration
 
-GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`.
+GitHub Actions runs Molly's CI for pushes and pull requests targeting `main`. It runs all plain Lua 5.1 suites, `tests/embeds.lua`, and `tests/lavalink_env_transfer.py`, then checks the complete PR/commit diff with `git diff --check`.
 
-The workflow currently performs:
-
-```sh
-lua5.1 tests/test.lua
-git diff --check
-```
-
-CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or production SeaWorld access.
+CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or SeaWorld access. The Luvit and SeaWorld integration suites are documented separately and are not reported as CI-verified.
 
 A green CI run verifies the repository test contract; it does not by itself prove that a particular Raspberry Pi deployment is running the same commit or configuration.
 

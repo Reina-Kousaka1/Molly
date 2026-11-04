@@ -3,7 +3,7 @@ local Store = require("src.persistence.guild_store")
 local Prefix = {}
 Prefix.__index = Prefix
 
-local usage_argument = { user = "<@user>", amount = "<amount>" }
+local usage_argument = { user = "<@user>", amount = "<amount>", reason = "<reason>" }
 
 local function words(text)
   local result = {}
@@ -25,7 +25,7 @@ function Prefix.new(router, settings, options)
   local prefix = options.prefix or "."
   return setmetatable({ router = router, settings = settings, default_prefix = prefix,
     logger = options.logger, clock = options.clock or os.time, cache_ttl = options.cache_ttl or 30,
-    prefixes = {} }, Prefix)
+    prefixes = {}, bot = nil }, Prefix)
 end
 
 function Prefix:_reply(message, text, command)
@@ -80,7 +80,8 @@ function Prefix:dispatch(message)
 
   local argument_names = definition.prefix.arguments or {}
   local arguments = words(raw_arguments or "")
-  if #arguments ~= #argument_names then
+  local has_reason_tail = argument_names[#argument_names] == "reason"
+  if (has_reason_tail and #arguments < #argument_names) or (not has_reason_tail and #arguments ~= #argument_names) then
     local usage = prefix .. command
     for _, name in ipairs(argument_names) do usage = usage .. " " .. (usage_argument[name] or ("<" .. name .. ">")) end
     self:_reply(message, "Usage: " .. usage, command)
@@ -89,7 +90,7 @@ function Prefix:dispatch(message)
 
   local parsed = {}
   for index, name in ipairs(argument_names) do
-    local value = arguments[index]
+    local value = name == "reason" and index == #argument_names and table.concat(arguments, " ", index) or arguments[index]
     if name == "user" then
       value = user_argument(value)
       if not value then
@@ -103,6 +104,7 @@ function Prefix:dispatch(message)
   local context = {
     source = "message", transport = "message", message = message, guild = { id = message.guild_id },
     author = { id = message.author.id }, member = message.member,
+    bot = self.bot and (self.bot.client or self.bot) or nil,
     channel = message.channel or { id = message.channel_id, name = message.channel_name, type = message.channel_type },
     channel_id = message.channel_id, request_id = message.id, request_type = "message", command_prefix = prefix,
     get_arg = function(_, name) return parsed[name] end,
@@ -121,6 +123,7 @@ end
 
 function Prefix:register(bot)
   if not bot or type(bot.on_message) ~= "function" then return false, "message_event_unavailable" end
+  self.bot = bot
   bot:on_message(function(message) self:dispatch(message) end)
   return true
 end

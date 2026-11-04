@@ -85,7 +85,13 @@ function Information.register(router, app)
       if not definition.permission or Permissions.has(ctx.member and ctx.member.permissions, definition.permission) then
         groups[category] = groups[category] or {}
         local prefix = ctx.command_prefix or "."
-        groups[category][#groups[category] + 1] = (surface == "prefix" and prefix or "/") .. definition.name
+        local label = (surface == "prefix" and prefix or "/") .. definition.name
+        if surface == "prefix" then
+          local aliases = router:prefix_aliases(definition)
+          for index, alias in ipairs(aliases) do aliases[index] = prefix .. alias end
+          if #aliases > 0 then label = label .. " (aliases: " .. table.concat(aliases, ", ") .. ")" end
+        end
+        groups[category][#groups[category] + 1] = label
       end
     end
     local lines = {}
