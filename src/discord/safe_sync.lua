@@ -35,7 +35,7 @@ local function is_permissions_options_migration(remote, local_spec, field)
     or remote.description ~= "Show selected effective permissions"
     or remote.default_member_permissions ~= nil
     or (type(remote.options) == "table" and #remote.options > 0)
-    or type(remote.id) ~= "string" or not remote.id:match("^%d+$") then return false end
+    or remote.id ~= "1565628256500191287" then return false end
   if not field or not field:match("^options") then return false end
   for _, option in ipairs(local_spec.options) do
     if type(option) ~= "table" or option.type ~= 1 then return false end
@@ -137,24 +137,10 @@ function Sync.run(bot, options)
     end
     if not found then missing[#missing + 1] = spec end
   end
-  for _, migration in ipairs(migrations) do
-    local path = endpoint .. "/" .. migration.id
-    -- PATCH only the fields being migrated. Omitted command permissions,
-    -- installation contexts, locales, and NSFW configuration remain intact.
-    local changed = bot.http:patch(path, {
-      description = migration.spec.description,
-      options = migration.spec.options,
-    })
-    if type(changed) ~= "table" or changed.id ~= migration.id or changed.name ~= migration.name
-      or changed.description ~= migration.spec.description
-      or difference(migration.spec, changed, "", true) ~= nil then
-      return false, "registration_unconfirmed", { command = migration.name, field = "options" }
-    end
-    local preserved, field = metadata_preserved(migration.metadata, changed)
-    if not preserved then
-      return false, "registration_unconfirmed", { command = migration.name, field = field }
-    end
-    existing[migration.key] = changed
+  if #migrations > 0 then
+    -- The built-in Discord client retries 429 responses and lacks a total
+    -- deadline. The separately controlled migration must run first.
+    return false, "migration_requires_controlled_transport", { command = migrations[1].name }
   end
   for _, update in ipairs(updates) do
     local changed = bot.http:patch(endpoint .. "/" .. update.id, update.spec)

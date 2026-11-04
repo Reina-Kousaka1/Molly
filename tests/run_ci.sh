@@ -30,3 +30,4 @@ do
 done
 "$LUA_BIN" tests/stress.lua
 "$PYTHON_BIN" tests/lavalink_env_transfer.py
+"$PYTHON_BIN" tests/permissions_migration_transport.py

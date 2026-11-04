@@ -29,8 +29,8 @@ local function fixture(remote)
     assert(path == "/applications/app-id/commands")
     return remote
   end
-  function bot.http:patch(path, payload)
-    calls.patches[#calls.patches + 1] = { path = path, payload = payload }
+  function bot.http:patch(path, payload, options)
+    calls.patches[#calls.patches + 1] = { path = path, payload = payload, options = options }
     local item = remote[1]
     for key, value in pairs(payload) do item[key] = value end
     return item
@@ -64,22 +64,17 @@ end
 do
   local remote = { legacy_command() }
   local bot, calls = fixture(remote)
-  local ok, outcome = SafeSync.run(bot, { allow_permissions_options_migration = true })
-  assert(ok and outcome.migrated == 1 and outcome.created == 0 and outcome.updated == 0)
-  assert(#calls.patches == 1 and #calls.posts == 0 and #calls.deletes == 0 and calls.bulk == 0)
-  local call = calls.patches[1]
-  assert(call.path == "/applications/app-id/commands/1565628256500191287")
-  assert(call.payload.description == definition.description and #call.payload.options == #definition.options)
-  assert(call.payload.default_member_permissions == nil and call.payload.integration_types == nil
-    and call.payload.contexts == nil and call.payload.nsfw == nil and call.payload.id == nil,
-    "PATCH must omit permissions and integration metadata to preserve existing values")
-  assert(remote[1].id == "1565628256500191287" and remote[1].integration_types[1] == 0
-    and remote[1].integration_types[2] == 1 and remote[1].contexts[1] == 0
-    and remote[1].nsfw == false and remote[1].default_member_permissions == nil,
-    "targeted update must retain identity and existing command metadata")
-  local synced, after = SafeSync.run(bot)
-  assert(synced and after.migrated == 0 and after.created == 0 and after.updated == 0,
-    "normal sync should accept the migrated options schema")
+  local ok, reason = SafeSync.run(bot, { allow_permissions_options_migration = true })
+  assert(not ok and reason == "migration_requires_controlled_transport")
+  assert(#calls.patches == 0 and #calls.posts == 0 and #calls.deletes == 0 and calls.bulk == 0)
+end
+
+do
+  local remote = { legacy_command() }
+  remote[1].id = "1565628256500191288"
+  local bot, calls = fixture(remote)
+  local ok = SafeSync.run(bot, { allow_permissions_options_migration = true })
+  assert(not ok and #calls.patches == 0, "unexpected command ID must fail closed")
 end
 
 do
@@ -91,4 +86,4 @@ do
     "unexpected remote definitions must fail closed")
 end
 
-io.write("PASS targeted /permissions options migration: explicit opt-in, stable ID, metadata preserved\n")
+io.write("PASS legacy migration is blocked in the automatic sync path\n")

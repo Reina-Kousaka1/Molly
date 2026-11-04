@@ -9,4 +9,6 @@ node_modules
 tests
 docs
 ops
+__pycache__
+*.pyc
 README.md
