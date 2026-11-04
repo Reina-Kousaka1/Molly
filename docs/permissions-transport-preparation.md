@@ -44,7 +44,8 @@ bulk overwrite is used. Read-only preflight still uses the Discord library.
 
 Validation includes the complete Lua and Luvit suites, HTTP response and
 network-error tests, real isolated subprocess tests with a deadline and
-overlapping ready event, and a mock full registration and sync of 79 commands.
+overlapping ready event, and the real Molly entry point with a mocked SeaWorld
+driver and Discord gateway, registering and synchronizing 79 commands.
 These tests do not perform a Discord login and do not exercise the production
 SeaWorld database. The local ARM64 test image is
 `molly:v2-controlled-sync-2026-11-04`,
