@@ -1,0 +1,6 @@
+import type { Metadata } from "next";
+import { PageIntro } from "@/components/site-shell";
+export const metadata: Metadata = { title: "Terms of use" };
+export default function TermsPage() {
+  return <div className="page-container legal-page"><PageIntro eyebrow="legal · draft for review" title="Terms of use." copy="Placeholder terms for review. They do not establish a complete legal agreement." /><div className="legal-callout">Replace these draft notes with terms reviewed for the actual operator and jurisdiction before public launch.</div><section><h2>Website information</h2><p>Command and catalog descriptions are provided for general information and are based on the Molly source code. Actual availability can depend on the bot version, server configuration, permissions, and runtime services.</p></section><section><h2>Virtual economy</h2><p>Catalog items and prices shown here are virtual examples from the bot code. No real purchase, payment, transfer of value, or delivery occurs through this website.</p></section><section><h2>Acceptable use</h2><p>[Add reviewed rules for using the website and any future dashboard integrations.]</p></section><section><h2>Operator and governing terms</h2><p>[Add verified operator details, applicable contact information, and legally reviewed terms.]</p></section></div>;
+}
