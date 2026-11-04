@@ -1,201 +1,162 @@
-# Molly V2 hardening and stress report
+# Persistence-growth and SeaWorld framing hardening report
 
-## Scope and tested source
+## Scope and evidence boundary
 
 - Repository: `Reina-Kousaka1/Molly`
-- Branch: `arena/5d5fabc5-molly` (PR #4)
-- Baseline inspected: `e4b0963d0bd184eec190e1ed8e0c93f236b2a872`
-- This report adds no economy feature and does not claim production readiness.
-- Runtime available on the inspection host: Windows PowerShell and Node.js. The
-  Windows Python app-execution alias was present but could not start. Lua 5.1,
-  `luac5.1`, Luvit, repository `runtime/`, `deps/`, and an
-  explicitly disposable SeaWorld test socket were absent. No production or
-  Docker service was queried or changed.
+- Branch: `arena/5d5fabc5-molly`
+- PR: [#4](https://github.com/Reina-Kousaka1/Molly/pull/4), still open; this work does not merge it.
+- Implementation and test commit: `d923d46` (`Bound persisted receipts and guard SeaWorld frames`).
+- Tested source: that commit, based on PR head `335a22730a32a7fb9494aa4d487a2123a3d7cdcc`.
+- Verification date: 2026-11-04.
 
-## SeaWorld wire and state limits
+The results distinguish three different things: Lua unit tests with isolated
+mocks, synthetic documents encoded by upstream Luvit's JSON module, and live
+SeaWorld behavior. The first two were exercised. No SeaWorld socket/service,
+disposable database, production document, or cross-process concurrency test was
+available. Therefore Molly's configured frame cap and mock rollback behavior
+are verified, but SeaWorld's own frame limit, transaction isolation, and
+rollback-after-disconnect behavior are not.
 
-`src/seaworld/socket_driver.lua` uses Luvit's `json.encode` to serialize the
-complete request object, then writes one newline-delimited frame. The hard limit
-in Molly is 1,048,576 bytes including the request newline. The response reader
-rejects a line whose newline occurs after byte 1,048,576 and rejects an
-unterminated receive buffer larger than that. This is a Molly transport limit;
-the SeaWorld service's own configured limits were not available for inspection.
+## Persistence-growth audit
 
-`src/persistence/guild_store.lua` stores each guild in one document and passes
-the full updated `data` table to a single `update` operation. Consequently the
-serialized request grows with the whole guild document. Accounts have no
-application-level cap, preserving balances and avoiding a permanent account
-count lockout. The bounded portions observed in source include a 1,000-row
-economy journal, 5,000 economy receipts, 200 inventory owners (50 item types per
-user, quantities up to 999), 1,000 moderation cases, and 200 AFK entries.
-Sephora fittings are capped at 200 users, but its 5,000 receipts currently
-fail closed at capacity rather than rotate. Staff directory mutations retain
-request receipts in the shared `data.receipts` table without a retention cap;
-this table can therefore continue growing independently of the economy receipt
-cap. Guild settings are small, but this does not bound every guild document.
+| Persisted area | Current bound/retention | Migration and replay behavior | Growth concern |
+| --- | --- | --- | --- |
+| Economy accounts and balances | No account-count cap; balances are never evicted. | Existing IDs and balances remain intact. | Unbounded account cardinality can exceed one update frame. |
+| Economy journal | Newest 1,000 rows per guild. | Rotation changes history only, not balances; lookup is limited to retained rows. | Bounded, but rotating the production array still uses `table.remove`. |
+| Economy receipts | Newest 1,000 per guild, across interaction and prefix-message IDs. | Legacy economy receipt envelopes migrate lazily. Numeric per-type watermarks cause expired IDs to fail closed as `replay_expired`; retained IDs still replay or conflict by operation fingerprint. Unrelated legacy receipt values are preserved. | Lowered from 5,000 after frame-size profiling; replay results outside the window are intentionally unavailable. |
+| Staff directory | Up to 200 staff entries; up to 50 notes per staff member, 500 bytes each; newest 1,000 staff receipts. | Only a legacy `data.receipts` value with the exact `{staff_id}` shape is migrated. Other receipt values are left in place. Retained duplicate requests validate staff, actor, action, and note before replay. | Staff notes are bounded but their combined worst case is larger than a single frame; notes are not silently pruned. |
+| Sephora | Up to 200 fittings; newest 5,000 receipts. | Existing receipts are migrated into a ring. Expired IDs fail closed with `replay_expired`, rather than stopping all future fittings at a permanent capacity ceiling. | The 5,000-receipt section consumes nearly half a MiB in the synthetic maximum-state profile. |
+| Moderation cases | Up to 1,000 cases; reason history up to 20 entries. | Case receipts are compact `{case_id}` references. Legacy full case receipt values are compacted on replay after validating the referenced case. Other receipt values are not generically deleted. | Long reasons/history contribute materially to aggregate document size. |
+| Global blacklist | Active blacklist entries are not automatically evicted; newest 1,000 mutation receipts. | Existing matching receipt replays remain idempotent; expired IDs fail closed. | Active entries remain intentionally unbounded to avoid silently removing administrative state. |
+| Lifecycle | One pending marker; newest 1,000 restart/update receipts. | Duplicate requests remain idempotent within the retained window; expired IDs fail closed. Cancel retains its existing behavior of removing the matching receipt. | Bounded. |
+| Inventory | Up to 200 owners, 50 item types per owner, quantity 999 per item. | Existing inventory is retained; capacity failures do not evict items. | Bounded cardinality, but can still add hundreds of KiB to a guild document. |
+| Guild settings | Schema-bounded strings and lists (for example, up to 100 self-assignable roles and ignored starboard channels). | Settings updates preserve unrelated V1.2 fields. | Small by themselves; included in the aggregate-size profile below. |
+| Global user settings | At most 1,000 saved profiles, two boolean preferences each; default-only profiles are removed. | Existing profiles remain readable and reset deletes only that user's profile. | Bounded and small. |
+| AFK and starboard | AFK: 200 records, 140-character message. Starboard publication records: 5,000 per guild. | These are distinct feature sections, not receipt maps. | Bound but contribute to the full guild document. |
+| Transient caches | AFK duplicate IDs 512, notice keys 500; starboard cache 500 messages/256 users per message; ledger receipt index at most 8 guilds. | Process-local only; rebuilt/expired as designed. | Not persisted, but their limits avoid process-memory growth. |
 
-The driver returns `resource_limit` before writing an oversized request. The
-GuildStore currently maps a failed `update` to generic `unavailable`; the user
-does not receive an explicit size-limit reason. The driver closes a failed
-transport, which should abandon the open transaction, but rollback-on-disconnect
-has not been verified against a real SeaWorld service. Therefore the current
-evidence does not establish the requested no-partial-write/recovery behavior at
-the actual 1 MiB boundary.
+### Receipt migration and data preservation
 
-### Size stress results
+`src/persistence/receipt_window.lua` maintains a bounded receipt map, ring order,
+count, and decimal-ID watermark. Warm lookups and eviction do not scan the
+receipt map. Initial legacy migration sorts IDs once to choose a deterministic
+retained window. The ledger's separate migration recognizes only its economy
+receipt envelopes; the staff migration recognizes only the exact old staff
+receipt shape. Unknown and non-staff entries in the shared legacy
+`data.receipts` map are not swept into a generic cleanup. Moderation compaction
+replaces only validated case receipts with compact references. These rules
+preserve V1.2 data where its ownership can be established and avoid silently
+losing unrelated receipts.
 
-No exact serialized-size result is reported: the required Luvit `json` encoder
-and disposable SeaWorld service were unavailable. Account counts alone are not
-a reliable byte-size proxy because receipt fingerprints, legacy fields,
-inventory, moderation reasons, and other persisted modules vary. The included
-`tests/stress.lua` measures synthetic ledger growth in the CI Lua runtime but is
-not represented as a SeaWorld serialization or integration measurement.
+The bounded windows necessarily narrow *how long* a prior result remains
+available. They do not permit an expired ID to repeat its mutation: watermarks
+reject expired IDs instead. The prior result itself can no longer be replayed
+once evicted. Active blacklist state, balances, inventory, staff notes, and
+other user data are not evicted as a frame-size workaround.
 
-Required follow-up before merge: run an opt-in test against a disposable service
-and the exact Luvit JSON encoder at 100, 500, 1,000, 5,000, and 10,000 accounts,
-plus inventory/receipt/config-heavy states; record outbound request size and
-response size; test the operation just below and above the frame limit, confirm
-the original document and balances after failure, then restart and verify.
+## SeaWorld JSON frame boundary
 
-## Ledger rotation and benchmark
+`src/seaworld/socket_driver.lua` measures the serialized request after copying
+the payload and encoding the complete envelope. Molly's configured limit is
+exactly **1,048,576 bytes**, including the newline delimiter. A request larger
+than that returns `resource_limit` before any write. The response reader accepts
+a newline at byte 1,048,576 and rejects a later newline or an unterminated buffer
+that grows past the same limit.
 
-The production journal keeps the newest 1,000 entries using append followed by
-`table.remove(data.journal, 1)` on overflow. The synthetic benchmark added at
-`tests/stress.lua` reports elapsed time, per-append average, p95/p99, Lua heap
-delta, and retained count for the existing rotation and a test-only ring-index
-candidate at 100, 1,000, 10,000, and 100,000 appends. It asserts that both retain
-the same oldest-to-newest window. The ring candidate is not production code.
+The value above is the client's configured ceiling, not a verified SeaWorld
+server setting. The server implementation/configuration was not available to
+inspect. The exact-byte tests establish client behavior, not that the service
+will accept a frame at that size.
 
-The same script runs 100, 500, 1,000, 5,000, 10,000, and (in full mode) 100,000
-distinct-user ledger operations against an in-memory store and reports throughput, average/p95/p99/
-maximum operation latency, heap delta, account count, journal count, and receipt
-count. This includes the actual ledger's receipt validation/retention path but
-excludes socket, JSON serialization, SeaWorld commit, and process restart costs.
+### Isolated request/response and rollback tests
 
-The first full CI attempt reached the 30-minute workflow timeout before the
-100,000-operation ledger benchmark completed. GitHub canceled the job, so no
-100,000 timing or throughput is reported. The CI profile is now capped at 10,000
-operations; the full profile remains explicitly runnable with
-`MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua`. The timeout is a failed/incomplete
-stress result, not a pass, and indicates a serious scaling concern in the
-synthetic full receipt-validation/eviction path.
+`tests/seaworld_driver.lua` builds exact-size frames using its test JSON
+encoder and verifies exact-limit acceptance, one-byte-over rejection before a
+socket write, UTF-8 byte counting, and exact/oversized responses. It exercises
+`resource_limit` propagation through the connector and GuildStore. With an
+isolated transaction mock, an earlier mock write is discarded when the
+oversized update fails and the store rolls the still-open transaction back.
 
-The CI-safe Lua 5.1 benchmark ran on commit `08f66f76dc26b78f09806ff9a836db13bbf1d6ff`
-in GitHub Actions run [41687517286](https://github.com/Reina-Kousaka1/Molly/actions/runs/41687517286).
-Measured values:
+`tests/run_ci.sh` passed these isolated cases. Separately,
+`tests/seaworld_luvit_frames.lua` was run with upstream Luvit's JSON encoder: it
+accepted a 1,048,576-byte request including newline, rejected a +1-byte request
+without writing it, and checked exact/oversized response frames. The mock tests
+do not prove SeaWorld's rollback behavior or real server-side frame limits.
 
-| Synthetic workload | Elapsed | Throughput / average | p95 / p99 (max for ledger) | Lua heap delta* | State after run |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Journal `table.remove`, 100,000 appends | 0.921 s | 9.208 µs/append | 9 / 15 µs p95/p99 | 2,064.1 KiB | 1,000 retained |
-| Test-only ring index, 100,000 appends | 0.151 s | 1.507 µs/append | 1 / 1 µs p95/p99 | 2,064.1 KiB | 1,000 retained |
-| Ledger, 100 operations | 0.009 s | 11,041 ops/s; 0.091 ms/op | 0.127 / 0.131 / 0.140 ms | 527.9 KiB | 100 accounts, 100 journal, 100 receipts |
-| Ledger, 500 operations | 0.146 s | 3,416 ops/s; 0.293 ms/op | 0.514 / 0.540 / 0.551 ms | 2,621.2 KiB | 500 accounts, 500 journal, 500 receipts |
-| Ledger, 1,000 operations | 0.550 s | 1,817 ops/s; 0.550 ms/op | 1.007 / 1.055 / 1.113 ms | 5,246.5 KiB | 1,000 accounts, 1,000 journal, 1,000 receipts |
-| Ledger, 5,000 operations | 13.317 s | 376 ops/s; 2.663 ms/op | 5.030 / 5.275 / 7.032 ms | -5,006.8 KiB | 5,000 accounts, 1,000 journal, 5,000 receipts |
-| Ledger, 10,000 operations | 114.470 s | 87 ops/s; 11.447 ms/op | 22.566 / 28.213 / 34.267 ms | 3,321.1 KiB | 10,000 accounts, 1,000 journal, 5,000 receipts |
+### Synthetic serialized document sizes
 
-*Heap deltas include per-operation latency sample arrays and automatic Lua GC;
-they are not isolated retained-state memory. The negative delta at 5,000 is a
-GC effect and demonstrates that these values are not reliable retained-memory
-measurements. These are synthetic in-memory Lua 5.1 measurements, not SeaWorld
-request size, persistence latency, or production throughput. The 100,000-operation full ledger attempt was canceled by the
-30-minute CI timeout without completing and has no valid timing result. The
-114-second 10,000-operation run and failed full run expose material scaling risk
-in repeated receipt validation/oldest-entry scans.
+The following frames use upstream Luvit's JSON encoder and include the update
+envelope and newline. They are synthetic persisted-document shapes, not
+measurements from SeaWorld:
 
-The test-only ring was about 6.1x faster for the isolated 100,000-append loop, but
-the existing rotation took under one second and contributed only a tiny part of
-the 114-second 10,000-operation ledger run. No production ring rewrite was made:
-the isolated speedup is not evidence of a material end-to-end gain, and changing
-the persisted journal representation would require separate order/lookup and
-backward-compatibility proof.
+| Synthetic guild state | Encoded request frame bytes |
+| --- | ---: |
+| 100 ledger operations/accounts | 63,309 |
+| 500 ledger operations/accounts | 315,679 |
+| 1,000 ledger operations/accounts | 631,181 |
+| 2,000 ledger operations/accounts | 717,014 |
+| 5,000 ledger operations/accounts | 972,171 |
+| 10,000 ledger operations/accounts | 1,397,172 |
+| Staff notes plus 1,000 staff receipts | 5,654,437 |
+| 1,000 cases with maximum-length reasons and compact receipts | 684,043 |
+| Inventory at 200 owners, 50 item types each | 410,528 |
+| Sephora fittings plus 5,000 receipts | 514,493 |
+| Maximum-length guild settings profile | 13,132 |
+| 1,000 global user settings profiles | 69,164 |
+| Combined staff/cases/inventory/Sephora/settings document | 7,275,493 |
 
-## Receipt retention and replay semantics
+At 5,000 ledger operations the synthetic frame leaves little room for other
+guild data; at 10,000 it exceeds Molly's configured frame limit. Some independent
+maximum-shape sections are themselves too large for one update frame. The
+preflight protects against sending such an update and returns an explicit error,
+but it does not make the data fit or partition it. A large existing guild may
+therefore become unable to perform any write that requires the whole document.
+These profiles are not a prediction of every production document and do not
+establish a SeaWorld limit.
 
-The inspected implementation retains at most 5,000 economy receipt envelopes.
-It keeps separate numeric watermarks for `interaction` and `message` IDs and
-compares decimal strings without converting them to floating-point numbers or
-interpreting Snowflakes as timestamps. An evicted request at or below its
-request-type watermark returns `replay_expired`; retained requests compare the
-structured operation fingerprint and return `replay_conflict` on mismatch.
-This preserves retry rejection after process reload without retaining every
-receipt. Transaction lookup only covers the bounded retained journal.
+## Ledger receipt-scan cost and benchmark
 
-Legacy economy receipts are migrated into the bounded envelope set once. The
-source iterates a Lua map during migration, then uses numeric ID ordering and a
-request-type tie-break for retention. No SeaWorld-backed migration with
-overlapping legacy/current receipt data has been run in this environment.
-Non-economy entries in `data.receipts` are intentionally retained for backward
-compatibility; staff receipts are currently unbounded. Sephora uses a separate
-hard cap and does not share economy watermarks.
+The ledger now keeps an eight-guild bounded in-process receipt index, with a
+persisted generation value used to detect changes. Successful commits update
+the index from the bounded receipt delta; cache misses and generation changes
+rebuild it. The test suite covers replay after reload, expired-ID rejection,
+legacy migration, index invalidation, and bounded cache cardinality. The
+instrumented synthetic profile recorded **zero receipt-map iteration visits**
+after index warmup.
 
-## Concurrency, commit uncertainty, and recovery
+| Direct synthetic ledger profile | Elapsed |
+| --- | ---: |
+| 100 operations | 0.004077 s |
+| 500 operations | 0.018401 s |
+| 1,000 operations | 0.038359 s |
+| 5,000 operations | 0.305608 s |
+| 10,000 operations | 0.604973 s |
 
-GuildStore uses a process-local busy flag keyed by guild and a forked
-connection/session for each operation. Different guilds do not share a global
-busy lock. Before each write it begins a SeaWorld transaction and rereads the
-guild document inside that transaction. Failures before commit attempt rollback;
-commit acknowledgement failure returns `outcome_unknown`, and an idempotent
-retry can replay a persisted receipt if the first commit succeeded.
+These are in-memory Lua measurements and do not include JSON encoding, socket
+I/O, SeaWorld commits, or process restarts. The earlier branch benchmark took
+114.470 seconds for 10,000 operations with the prior receipt-scan path; treat
+the figures as directional rather than a controlled same-host comparison.
 
-The repository has mock tests for guild isolation, per-guild session ownership,
-rollback, lost commit acknowledgement, and retry after an unknown commit. No
-real SeaWorld concurrency test was possible here. Cross-process lost-update
-protection depends on SeaWorld's transaction isolation/locking semantics and is
-not proven by Molly's process-local busy flag or mock tests.
+The latest full stress run on the tested source completed 100,000 ledger
+operations in **11.088 seconds** (9,018.7 operations/second; mean 0.111 ms,
+p95 0.182 ms, p99 0.320 ms, maximum 11.756 ms). It ended with 100,000 accounts,
+1,000 journal rows, and 1,000 receipts. The 100,000-append journal microbenchmark
+measured `table.remove` at 1.038 seconds versus 0.064 seconds for a test-only
+ring index. The ring index is not production journal code; no persisted journal
+representation change was made.
 
-## Luvit, Lavalink, and integration coverage
+## Test results and what remains unverified
 
-The existing `tests/run_luvit.sh` invokes Lavalink client tests with mocked
-network transports and Discord registration tests with a mocked client. It
-requires Luvit, the Luvit `json` module, and `discord.lua` on `package.path`.
-Those dependencies were absent, so neither test was executed. No Discord token
-or live Lavalink endpoint was used. The existing `tests/run_integration.sh`
-requires an explicit disposable SeaWorld socket and confirmation variable; no
-such socket was set, so no SeaWorld integration test was started.
+- `LUA_BIN=/tmp/molly-lua51/src/lua LUAC_BIN=/tmp/molly-lua51/src/luac PYTHON_BIN=python3 tests/run_ci.sh` — passed all suites: 174 Lua assertions/cases across the suites plus 4 Python checks (178 reported checks total), zero failures. The CI stress profile reaches 10,000 ledger operations; the journal microbenchmark reaches 100,000 appends.
+- `MOLLY_STRESS_FULL=1 /tmp/molly-lua51/src/lua tests/stress.lua` — passed the 100,000-operation synthetic profile; latest timings are recorded above.
+- Actual upstream Luvit JSON frame test — passed at exactly 1,048,576 bytes including newline and rejected +1 byte. The Luvit JSON module and runner lived in temporary build paths and are not committed.
+- Lavalink client mocks — 4/4 passed with Luvit's `json` module and `LUA_PATH` configured.
+- The complete `tests/run_luvit.sh` runner was not run to completion because `discord.lua` was unavailable. No Discord login, live Lavalink connection, or SeaWorld integration test ran.
+- `git diff --check` — passed.
 
-GitHub Actions run 41688195950 on commit `7d6a90c9dd3a188355de6c355d51f755908dee0f`
-passed the Lua 5.1 syntax check, all 12 plain
-Lua suites (159 tests, zero failures), the CI-profile synthetic stress checks,
-the Python environment-transfer test (4 checks, zero failures), and diff
-whitespace validation. The separate 100,000-operation full profile was
-attempted in run 41681560738 and canceled at the 30-minute job timeout; it is not
-counted as a passing test. The test classification and reproduction commands
-remain in `docs/testing.md`.
-
-## Risks and merge blockers
-
-1. **Guild document growth can permanently block writes.** A one-document,
-   one-frame persistence model has no safe way in Molly to split a guild state
-   larger than 1 MiB. There is no verified SeaWorld-side oversized-document
-   behavior or rollback test. A durable remedy needs a SeaWorld-supported
-   multi-document/partitioned transaction design or a hard admission bound with
-   proven semantics; neither is introduced here.
-2. **Some persisted collections have unbounded or fail-closed growth.** Shared
-   staff receipts are unbounded. Sephora receipts stop accepting new fittings
-   at 5,000. These can contribute to guild document growth or become permanent
-   feature-capacity failures.
-3. **Production transaction isolation is unverified.** In-process guild
-   isolation is covered by tests, but SeaWorld's cross-session/cross-process
-   behavior, timeout recovery, and disconnect rollback require a disposable
-   service test.
-4. **Luvit-only test suites were not run locally.** The synthetic benchmark and
-   Lua 5.1 CI can cover ledger CPU behavior, but not Luvit JSON frame sizing,
-   socket behavior, Discord library integration, or real persistence latency.
-
-### Architecture direction if the frame boundary is confirmed
-
-Do not silently truncate accounts, balances, inventory, receipts, or journal
-data. First establish SeaWorld's supported transactional primitives and
-document-size limits. If one guild document cannot safely grow indefinitely,
-the future design should partition high-growth data (for example, account
-records and historical receipts) into deterministic guild-scoped records while
-keeping balances and request receipts in a transactionally consistent unit.
-Migration must be additive, restartable, and dual-read/verified before any
-cutover; no such migration is safe to design from the Molly adapter alone.
-
-## Final measured results
-
-Most recent CI-tested commit: `7d6a90c9dd3a188355de6c355d51f755908dee0f`.
-Real SeaWorld sizing, concurrency, and Luvit integration remain explicitly
-unverified until the disposable dependencies described above are provided.
+No SeaWorld service was used to verify transaction rollback, cross-session or
+cross-process isolation, oversized-document rejection, or actual frame sizing.
+A one-document, one-frame persistence model still has a hard aggregate-growth
+risk. Durable partitioning needs SeaWorld-supported transactional semantics and
+an additive, restartable migration; this repository does not claim or implement
+that service-level migration.
