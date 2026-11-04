@@ -18,11 +18,14 @@ test. The Lua and Python tests use in-memory fakes or mocked transports; they do
 not connect to Discord, Lavalink, or SeaWorld.
 
 `tests/seaworld_driver.lua` verifies the client's 1,048,576-byte request and
-response frame boundary, counting the terminating newline. It tests the exact
-limit and one byte over, UTF-8 byte counts, `resource_limit` propagation, and
-rollback using isolated fake sessions and sockets. These tests verify Molly's
-client behavior only; they do not establish SeaWorld's configured limit or
-server-side transaction semantics.
+response frame boundary, counting the terminating newline. It tests limit minus
+one, the exact limit, and one byte over, UTF-8 byte counts, preflight before
+transport, `resource_limit` propagation, serialization failure, ambiguous
+write/commit outcomes, and rollback using isolated fake sessions and sockets.
+Connector transaction tests also cover failed/throwing commit and rollback
+acknowledgements.
+These tests verify Molly's client behavior only; they do not establish
+SeaWorld's configured limit or server-side transaction semantics.
 
 `tests/stress.lua`'s default profile covers 100, 500, 1,000, 5,000, and 10,000
 synthetic ledger operations. It also compares journal rotation implementations
@@ -35,10 +38,10 @@ MOLLY_STRESS_FULL=1 lua5.1 tests/stress.lua
 This is an in-memory Lua benchmark. It exercises ledger receipt validation,
 retention, and the bounded receipt-index cache, but excludes JSON serialization,
 sockets, SeaWorld commit latency, and process restarts. The latest measured
-100,000-operation run completed in 11.088 seconds (about 9,019 operations per
-second; p95 0.182 ms, p99 0.320 ms, maximum 11.756 ms), ending with 100,000
-accounts, 1,000 journal rows, and 1,000 receipts. This is not a SeaWorld
-performance result.
+100,000-operation run completed in 20.155 seconds (about 4,962 operations per
+second; mean 0.202 ms, p95 0.302 ms, p99 0.474 ms, maximum 15.374 ms), ending
+with 100,000 accounts, 1,000 journal rows, and 1,000 receipts. This is not a
+SeaWorld performance result.
 
 ## Luvit and library-dependent tests
 
@@ -50,13 +53,14 @@ runtime and required Lua modules on the runtime's normal search path:
 LUVIT_BIN=./runtime/luvit tests/run_luvit.sh
 ```
 
-The frame-boundary test was run against upstream Luvit's JSON encoder: an
-exactly 1,048,576-byte newline-terminated request was accepted, a request one
-byte larger was rejected before any socket write, and the same exact/oversized
-checks were made for responses. This measures Molly's serialized synthetic
-frames using that encoder. It is not a live SeaWorld test. The complete Luvit
-runner was not verified because the required `discord.lua` module was not
-available; Lavalink and frame tests were run separately with their dependencies.
+The frame-boundary test was run against upstream Luvit's JSON encoder: request
+and response frames at 1,048,575 and 1,048,576 bytes were accepted, and
+1,048,577-byte frames were rejected. Oversized requests were rejected before
+any socket write; UTF-8 byte counting was also checked. This measures Molly's
+synthetic frames using that encoder, not a live SeaWorld service. The Luvit
+runner passed the frame and four Lavalink mock tests, then stopped because the
+required `discord.lua` module was not available; Discord registration was not
+verified.
 
 `tests/lavalink_client.lua` mocks its HTTP and WebSocket transports; it needs
 Luvit's `json` module but no live Lavalink service. `tests/discord_registration.lua`

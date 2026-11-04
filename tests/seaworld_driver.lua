@@ -65,6 +65,7 @@ local socket_net = { connect = function(options)
     assert(operation and request_id and frame:sub(-1) == "\n", "invalid request frame")
     mock.writes[#mock.writes + 1] = { operation = operation, request_id = request_id, frame = frame }
     local response = mock.handler(operation, request_id, frame)
+    if mock.drop_response_for == operation then return true end
     json.next_response = response
     local body = mock.response_body and mock.response_body(operation, request_id, response) or json.encode(response)
     queued = body .. "\n"
@@ -72,7 +73,11 @@ local socket_net = { connect = function(options)
   end
   local socket = {}
   local function close()
-    if not closed then closed = true; mock.closes = mock.closes + 1 end
+    if not closed then
+      closed = true
+      mock.closes = mock.closes + 1
+      if mock.on_close then mock.on_close() end
+    end
   end
   mock.sessions[#mock.sessions + 1] = { read = read, write = write, close = close }
   return read, write, socket, nil, nil, close
@@ -144,10 +149,16 @@ test("encoded JSON requests accept exactly one MiB including the newline", funct
     return assert(Driver.measure_request("update", update_payload(string.rep("a", size)), "1"))
   end)
   local payload = update_payload(string.rep("a", length))
+  assert(Driver.measure_request("update", update_payload(string.rep("a", length - 1)), "1") == maximum - 1)
   assert(Driver.measure_request("update", payload, "1") == maximum)
   local baseline = Driver.measure_request("update", update_payload("a"), "1")
   assert(Driver.measure_request("update", update_payload("ä"), "1") == baseline + 1,
     "frame limits count UTF-8 bytes rather than Unicode code points")
+
+  local below_mock = new_mock(); active_mock = below_mock
+  local below_driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
+  local below_ok = below_driver:_call("update", update_payload(string.rep("a", length - 1)), false)
+  assert(below_ok and #below_mock.writes == 1 and #below_mock.writes[1].frame == maximum - 1)
 
   local mock = new_mock(); active_mock = mock
   local driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
@@ -156,7 +167,20 @@ test("encoded JSON requests accept exactly one MiB including the newline", funct
   assert(mock.writes[1].frame:sub(-1) == "\n")
 end)
 
-test("one-byte-oversized JSON requests return resource_limit before writing", function()
+test("serialization failures return serialization_failed before opening a transport", function()
+  local mock = new_mock(); active_mock = mock
+  local original_encode = json.encode
+  json.encode = function() error("fixture encode failure") end
+  local called, ok, reason = pcall(function()
+    local driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
+    return driver:_call("update", update_payload("small"), false)
+  end)
+  json.encode = original_encode
+  assert(called and not ok and reason == "serialization_failed")
+  assert(mock.connects == 0 and #mock.writes == 0)
+end)
+
+test("one-byte-oversized JSON requests return resource_limit before opening a transport", function()
   local maximum = Driver.max_frame_bytes
   local length = find_exact_size(maximum, function(size)
     return assert(Driver.measure_request("update", update_payload(string.rep("a", size)), "1"))
@@ -165,11 +189,28 @@ test("one-byte-oversized JSON requests return resource_limit before writing", fu
   local driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
   local ok, reason = driver:_call("update", update_payload(string.rep("a", length + 1)), false)
   assert(not ok and reason == "resource_limit")
-  assert(#mock.writes == 0 and mock.connects == 1 and mock.closes == 1)
+  assert(#mock.writes == 0 and mock.connects == 0 and mock.closes == 0)
+  assert(driver.request_sequence == 0, "a frame rejected before transport must not consume a request ID")
 end)
 
-test("response JSON frames accept the exact limit and reject one byte over", function()
+test("response JSON frames accept limit minus one and exact limit, and reject one byte over", function()
   local maximum = Driver.max_frame_bytes
+  local below_mock = new_mock(); active_mock = below_mock
+  below_mock.response_body = function(_, request_id)
+    local length = find_exact_size(maximum, function(size)
+      return #json.encode(envelope(request_id, { pad = string.rep("r", size) })) + 1
+    end)
+    local response = envelope(request_id, { pad = string.rep("r", length - 1) })
+    json.next_response = response
+    local body = json.encode(response)
+    below_mock.response_bytes = #body + 1
+    return body
+  end
+  local below_driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
+  local below_ok, below_result = below_driver:_call("health", {}, false)
+  assert(below_ok and #below_result.pad > maximum - 257)
+  assert(below_mock.response_bytes == maximum - 1)
+
   local exact_mock = new_mock(); active_mock = exact_mock
   exact_mock.response_body = function(_, request_id)
     local length = find_exact_size(maximum, function(size)
@@ -177,22 +218,28 @@ test("response JSON frames accept the exact limit and reject one byte over", fun
     end)
     local response = envelope(request_id, { pad = string.rep("r", length) })
     json.next_response = response
-    return json.encode(response)
+    local body = json.encode(response)
+    exact_mock.response_bytes = #body + 1
+    return body
   end
   local exact_driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
   local accepted, result = exact_driver:_call("health", {}, false)
   assert(accepted and #result.pad > maximum - 256)
+  assert(exact_mock.response_bytes == maximum)
 
   local oversized_mock = new_mock(); active_mock = oversized_mock
   oversized_mock.response_body = function(_, request_id)
     local length = find_exact_size(maximum, function(size)
       return #json.encode(envelope(request_id, { pad = string.rep("r", size) })) + 1
     end)
-    return json.encode(envelope(request_id, { pad = string.rep("r", length + 1) }))
+    local body = json.encode(envelope(request_id, { pad = string.rep("r", length + 1) }))
+    oversized_mock.response_bytes = #body + 1
+    return body
   end
   local oversized_driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 })
   local ok, reason = oversized_driver:_call("health", {}, false)
   assert(not ok and reason == "resource_limit")
+  assert(oversized_mock.response_bytes == maximum + 1)
 end)
 
 test("transaction rollback follows a preflight resource_limit and discards earlier mock writes", function()
@@ -236,6 +283,99 @@ test("transaction rollback follows a preflight resource_limit and discards earli
     if request.operation == "rollback" then rollbacks = rollbacks + 1 end
   end
   assert(updates == 1 and rollbacks == 1, "the oversized second update must never be written")
+end)
+
+test("lost write acknowledgement returns outcome_unknown without retry or commit", function()
+  local mock = new_mock(); active_mock = mock
+  mock.drop_response_for = "update"
+  mock.handler = function(operation, request_id)
+    if operation == "health" then
+      return envelope(request_id, { status = "healthy", api_version = "1.0.0", capabilities = {
+        native_queries = true, field_updates = true, transactions = true } })
+    elseif operation == "query" then
+      return envelope(request_id, { rows = { { id = "doc-1" } } })
+    elseif operation == "get" then
+      return envelope(request_id, { document = { data = clone(mock.document) } })
+    elseif operation == "begin" then
+      mock.snapshot = clone(mock.document); mock.transaction_active = true
+    elseif operation == "update" then
+      mock.staged_updates = (mock.staged_updates or 0) + 1
+    end
+    return envelope(request_id, {})
+  end
+  mock.document = { guild = "10", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  mock.on_close = function()
+    if mock.transaction_active then
+      mock.document = mock.snapshot
+      mock.snapshot, mock.transaction_active = nil, false
+    end
+  end
+
+  local root = Connector.new({ driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 }) })
+  local store = GuildStore.new(root)
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "updated", true
+  end)
+  assert(not ok and reason == "outcome_unknown")
+  local update_count, commit_count, rollback_count = 0, 0, 0
+  for _, request in ipairs(mock.writes) do
+    if request.operation == "update" then update_count = update_count + 1 end
+    if request.operation == "commit" then commit_count = commit_count + 1 end
+    if request.operation == "rollback" then rollback_count = rollback_count + 1 end
+  end
+  assert(update_count == 1 and commit_count == 0 and rollback_count == 0)
+  assert(mock.document.accounts["101"] == nil and not mock.transaction_active)
+  assert(not store.busy_guilds["10"])
+end)
+
+test("server resource_limit rejection retains the transaction for explicit rollback", function()
+  local mock = new_mock(); active_mock = mock
+  mock.document = { guild = "10", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  mock.handler = function(operation, request_id)
+    if operation == "health" then
+      return envelope(request_id, { status = "healthy", api_version = "1.0.0", capabilities = {
+        native_queries = true, field_updates = true, transactions = true } })
+    elseif operation == "query" then
+      return envelope(request_id, { rows = { { id = "doc-1" } } })
+    elseif operation == "get" then
+      return envelope(request_id, { document = { data = clone(mock.document) } })
+    elseif operation == "begin" then
+      mock.snapshot = clone(mock.document); mock.transaction_active = true
+    elseif operation == "update" then
+      return { protocol_version = "1.0.0", request_id = request_id, ok = false,
+        error = { code = "resource_limit" } }
+    elseif operation == "rollback" then
+      assert(mock.transaction_active and mock.snapshot)
+      mock.document = mock.snapshot; mock.snapshot = nil; mock.transaction_active = false
+    elseif operation == "commit" then
+      error("a rejected update must never be committed")
+    end
+    return envelope(request_id, {})
+  end
+
+  local root = Connector.new({ driver = Driver.new({ path = "mock-seaworld", timeout_ms = 100 }) })
+  local original_session = root.session
+  function root:session()
+    local session, reason = original_session(self)
+    self.last_session = session
+    return session, reason
+  end
+  local store = GuildStore.new(root)
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "updated", true
+  end)
+  assert(not ok and reason == "resource_limit")
+  assert(mock.document.accounts["101"] == nil and not mock.transaction_active)
+  local updates, rollbacks, commits = 0, 0, 0
+  for _, request in ipairs(mock.writes) do
+    if request.operation == "update" then updates = updates + 1 end
+    if request.operation == "rollback" then rollbacks = rollbacks + 1 end
+    if request.operation == "commit" then commits = commits + 1 end
+  end
+  assert(updates == 1 and rollbacks == 1 and commits == 0)
+  assert(root.last_session and not root.last_session.in_transaction)
 end)
 
 test("GuildStore propagates oversized-update resource_limit and rolls back the live mock transaction", function()
