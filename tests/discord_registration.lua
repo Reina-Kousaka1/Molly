@@ -58,4 +58,17 @@ local settings_interaction = { id = "2", token = "fixture", guild_id = "2", memb
   } } } } }
 local settings_context = bootstrap.bot:get_application_context(settings_interaction)
 assert(settings_context.molly_subcommand == "prefix" and settings_context.molly_subcommand_action == "set")
+local writes = 0
+bootstrap.bot.client = { get_application_id = function() return '123' end }
+bootstrap.bot.http = { get = function() return {} end }
+bootstrap.sync_write = function(_, method, path, spec)
+  assert(method == 'POST' and path == '/applications/123/commands')
+  writes = writes + 1
+  local result = {}
+  for key, value in pairs(spec) do result[key] = value end
+  result.id = tostring(writes)
+  return result
+end
+assert(bootstrap.bot:sync_commands() and writes == #commands and bootstrap.sync_state.status == 'success')
+assert(bootstrap.bot:sync_commands() and writes == #commands, 'repeated ready must not repeat writes')
 print("PASS discord.lua full registration, options, permissions and interaction context: " .. #commands .. " commands")

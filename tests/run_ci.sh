@@ -24,6 +24,7 @@ for suite in \
   tests/prefix_commands.lua \
   tests/command_registration_all.lua \
   tests/command_migration.lua \
+  tests/discord_sync_state.lua \
   tests/embeds.lua
 do
   "$LUA_BIN" "$suite"
@@ -31,3 +32,4 @@ done
 "$LUA_BIN" tests/stress.lua
 "$PYTHON_BIN" tests/lavalink_env_transfer.py
 "$PYTHON_BIN" tests/permissions_migration_transport.py
+"$PYTHON_BIN" tests/discord_sync_worker.py

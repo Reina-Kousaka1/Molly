@@ -19,3 +19,4 @@ fi
 "$LUVIT_BIN" tests/seaworld_luvit_frames.lua
 "$LUVIT_BIN" tests/lavalink_client.lua
 "$LUVIT_BIN" tests/discord_registration.lua
+"$LUVIT_BIN" tests/discord_sync_transport.lua

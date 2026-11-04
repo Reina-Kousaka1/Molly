@@ -23,11 +23,32 @@ Preparation image: `molly:v2-permissions-once-preparation-2026-11-04`, ARM64,
 `sha256:39f8bb57f563f94e3130b9bb1891b609a9ccc6be0fd89972c7ad91f20e2c48b1`.
 It has not been approved for production.
 
-**Open deployment blocker:** the bot's normal sync still uses the existing
-Discord client, which retries 429 responses. Its underlying coro-http can also
-retry after a stale reused connection closes. A sync failure can be retried on
-another gateway-ready event. Therefore the subsequent registration of missing
-commands does not yet meet the operator's no-retry and stop-on-error rules.
-Do not run the migration or start the bot until this separate path is fixed and
-end-to-end tested. The database, live Discord state, and services were not
-changed during this preparation.
+## Controlled normal command sync
+
+The bot's normal sync preflights every command before writing. Description
+updates and new commands are sent individually by `tools/discord_sync_worker.py`
+through `src/discord/sync_transport.lua`. Each write starts a fresh process and
+connection, performs exactly one HTTPS request without redirects or retries,
+and has a 12-second total deadline. The token is sent through a private pipe,
+never through arguments, logs, or the subprocess environment. A 400, 403 or
+429 response fails the sync; timeouts, connection loss, 5xx, malformed data,
+and unconfirmed write results are treated as unknown. No further write is
+attempted after either kind of failure.
+
+`sync_state.lua` transitions from idle to running and then success, failed, or
+unknown. A repeated gateway-ready or reconnect does not initiate another sync
+after a result, and it cannot start a concurrent sync while one is running.
+Operator investigation is required before a new process is started after a
+failed or unknown result. Existing unrelated commands are not deleted and no
+bulk overwrite is used. Read-only preflight still uses the Discord library.
+
+Validation includes the complete Lua and Luvit suites, HTTP response and
+network-error tests, real isolated subprocess tests with a deadline and
+overlapping ready event, and a mock full registration and sync of 79 commands.
+These tests do not perform a Discord login and do not exercise the production
+SeaWorld database. The local ARM64 test image is
+`molly:v2-controlled-sync-2026-11-04`,
+`sha256:e6662c80f1e849f8be0fe771a4249bbcd3b76238302ef786b31c8075de04ac79`.
+The original migration, production Discord state, databases, running services,
+and rollback images have not been changed. Live operation remains subject to
+explicit approval and a fresh read-only preflight.

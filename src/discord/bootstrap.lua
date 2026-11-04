@@ -1,6 +1,7 @@
 local EventRouter = require("src.events.router")
 local SafeSync = require("src.discord.safe_sync")
 local Response = require("src.discord.response")
+local SyncState = require("src.discord.sync_state")
 
 local Bootstrap = {}
 Bootstrap.__index = Bootstrap
@@ -24,6 +25,8 @@ function Bootstrap.new(options)
     presence = options.presence,
     on_client = options.on_client,
     allow_permissions_options_migration = options.allow_permissions_options_migration == true,
+    sync_state = SyncState.new(),
+    sync_write = options.sync_write,
     spawn = options.spawn or default_spawn,
     events = EventRouter.new(options.logger),
     bot = nil,
@@ -43,10 +46,14 @@ function Bootstrap:build()
   if self.bot.command_tree then
     local logger = self.logger
     self.bot.sync_commands = function(bot)
+      if not self.sync_state:begin() then return self.sync_state.status == 'success' end
+      self.sync_ok = false
       local call_ok, synced, outcome, details = pcall(SafeSync.run, bot, {
         allow_permissions_options_migration = self.allow_permissions_options_migration,
+        write = self.sync_write,
       })
       if not call_ok or not synced then
+        self.sync_state:finish(false, call_ok and outcome or 'outcome_unknown')
         self.sync_ok = false
         if logger then
           details = type(details) == "table" and details or {}
@@ -58,6 +65,7 @@ function Bootstrap:build()
         end
         return false
       end
+      self.sync_state:finish(true)
       self.sync_ok = true
       if logger then
         outcome = type(outcome) == "table" and outcome or {}

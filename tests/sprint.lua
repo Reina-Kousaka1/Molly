@@ -287,14 +287,18 @@ test("command sync keeps unknown commands, patches description-only drift, and r
     { to_dict = function() return { name = "help", type = 1, description = "help" } end },
   } } }
   function bot.http:get() return remote end
-  function bot.http:post(_, spec) posts = posts + 1; return { name = spec.name, id = "8" } end
+  function bot.http:post(_, spec) posts = posts + 1; return { name = spec.name, id = "8", type = spec.type, description = spec.description } end
   function bot.http:patch(path, spec)
     patches = patches + 1
     assert(path == "/applications/9/commands/6")
     return { id = "6", name = spec.name, type = spec.type, description = spec.description, options = spec.options }
   end
   remote[2] = { id = "6", name = "ping", type = 1, description = "stale description" }
-  local ok, outcome = SafeSync.run(bot)
+  local function writer(target, method, path, spec)
+    if method == 'POST' then return target.http:post(path, spec) end
+    return target.http:patch(path, spec)
+  end
+  local ok, outcome = SafeSync.run(bot, { write = writer })
   assert(ok and outcome.updated == 1 and outcome.created == 1 and patches == 1 and posts == 1 and #remote == 2)
 
   patches, posts = 0, 0
