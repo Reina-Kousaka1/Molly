@@ -1,6 +1,47 @@
 local Sync = {}
 local fields = { "type", "name", "description", "required", "options", "choices", "channel_types",
   "min_value", "max_value", "min_length", "max_length", "default_member_permissions", "value", "autocomplete" }
+local preserved_command_metadata = { "default_member_permissions", "integration_types", "contexts", "nsfw",
+  "name_localizations", "description_localizations" }
+
+local function same_value(left, right)
+  if type(left) ~= type(right) then return false end
+  if type(left) ~= "table" then return left == right end
+  for key, value in pairs(left) do if not same_value(value, right[key]) then return false end end
+  for key in pairs(right) do if left[key] == nil then return false end end
+  return true
+end
+
+local function copy_metadata(command)
+  local snapshot = {}
+  for _, field in ipairs(preserved_command_metadata) do
+    if command[field] ~= nil then snapshot[field] = command[field] end
+  end
+  return snapshot
+end
+
+local function metadata_preserved(snapshot, command)
+  for field, value in pairs(snapshot) do
+    if not same_value(value, command[field]) then return false, field end
+  end
+  return true
+end
+
+local function is_permissions_options_migration(remote, local_spec, field)
+  if local_spec.name ~= "permissions" or local_spec.type ~= 1
+    or type(local_spec.options) ~= "table" or #local_spec.options == 0
+    or local_spec.default_member_permissions ~= nil then return false end
+  if remote.name ~= "permissions" or (remote.type or 1) ~= 1
+    or remote.description ~= "Show selected effective permissions"
+    or remote.default_member_permissions ~= nil
+    or (type(remote.options) == "table" and #remote.options > 0)
+    or type(remote.id) ~= "string" or not remote.id:match("^%d+$") then return false end
+  if not field or not field:match("^options") then return false end
+  for _, option in ipairs(local_spec.options) do
+    if type(option) ~= "table" or option.type ~= 1 then return false end
+  end
+  return true
+end
 
 local function difference(a, b, path, ignore_descriptions)
   if type(a) ~= type(b) then return path end
@@ -32,15 +73,17 @@ local function difference(a, b, path, ignore_descriptions)
   return nil
 end
 
--- Preflight all schemas first. Only description-only drift is PATCHed; this
--- never deletes commands or changes an executable command schema.
-function Sync.run(bot)
+-- Preflight all schemas first. By default only description-only drift is
+-- PATCHed. One explicit, signature-guarded migration may update the global
+-- /permissions options; this never deletes commands or uses bulk overwrite.
+function Sync.run(bot, options)
+  options = options or {}
   local id = bot.client:get_application_id()
   if not id or not bot.http then return false, "application_unavailable" end
   local endpoint = "/applications/" .. id .. "/commands"
   local remote = bot.http:get(endpoint)
   if type(remote) ~= "table" then return false, "remote_unavailable" end
-  local existing, missing, local_names, updates = {}, {}, {}, {}
+  local existing, missing, local_names, updates, migrations = {}, {}, {}, {}, {}
   for _, command in ipairs(remote) do
     local key = tostring(command.type or 1) .. ":" .. command.name
     if existing[key] then return false, "remote_duplicate_command", { command = command.name } end
@@ -56,20 +99,62 @@ function Sync.run(bot)
     if found then
       local field = difference(spec, found, "")
       if field then
+        local migrating_permissions = false
         -- Discord command descriptions are explanatory metadata. Repair them
         -- only when the entire executable schema matches, so stale descriptions
         -- cannot hide option, permission, or scope conflicts.
         local contract_field = difference(spec, found, "", true)
         if contract_field ~= nil then
-          return false, "command_conflict", { command = spec.name, field = contract_field }
+          if options.allow_permissions_options_migration == true
+            and is_permissions_options_migration(found, spec, contract_field) then
+            migrations[#migrations + 1] = {
+              id = found.id, key = key, name = spec.name, spec = spec,
+              metadata = copy_metadata(found),
+            }
+            migrating_permissions = true
+          else
+            return false, "command_conflict", { command = spec.name, field = contract_field }
+          end
+        elseif spec.name == "permissions" and found.description == "Show selected effective permissions"
+          and options.allow_permissions_options_migration == true then
+          -- A comparator change must never turn the explicit migration into a
+          -- no-op. The legacy description/options signature is required above.
+          if is_permissions_options_migration(found, spec, "options") then
+            migrations[#migrations + 1] = {
+              id = found.id, key = key, name = spec.name, spec = spec,
+              metadata = copy_metadata(found),
+            }
+            migrating_permissions = true
+          end
         end
         if type(found.id) ~= "string" or not found.id:match("^%d+$") then
           return false, "registration_unconfirmed", { command = spec.name, field = field }
         end
-        updates[#updates + 1] = { id = found.id, name = spec.name, key = key, spec = spec }
+        if not migrating_permissions then
+          updates[#updates + 1] = { id = found.id, name = spec.name, key = key, spec = spec }
+        end
       end
     end
     if not found then missing[#missing + 1] = spec end
+  end
+  for _, migration in ipairs(migrations) do
+    local path = endpoint .. "/" .. migration.id
+    -- PATCH only the fields being migrated. Omitted command permissions,
+    -- installation contexts, locales, and NSFW configuration remain intact.
+    local changed = bot.http:patch(path, {
+      description = migration.spec.description,
+      options = migration.spec.options,
+    })
+    if type(changed) ~= "table" or changed.id ~= migration.id or changed.name ~= migration.name
+      or changed.description ~= migration.spec.description
+      or difference(migration.spec, changed, "", true) ~= nil then
+      return false, "registration_unconfirmed", { command = migration.name, field = "options" }
+    end
+    local preserved, field = metadata_preserved(migration.metadata, changed)
+    if not preserved then
+      return false, "registration_unconfirmed", { command = migration.name, field = field }
+    end
+    existing[migration.key] = changed
   end
   for _, update in ipairs(updates) do
     local changed = bot.http:patch(endpoint .. "/" .. update.id, update.spec)
@@ -85,6 +170,6 @@ function Sync.run(bot)
       return false, "registration_unconfirmed"
     end
   end
-  return true, { updated = #updates, created = #missing }
+  return true, { updated = #updates, created = #missing, migrated = #migrations }
 end
 return Sync

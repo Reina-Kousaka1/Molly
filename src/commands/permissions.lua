@@ -1,4 +1,3 @@
-local DiscordPermissions = require("src.discord.permissions")
 local Response = require("src.discord.response")
 
 local Commands = {}
@@ -35,7 +34,9 @@ end
 function Commands.register(router, engine)
   router:register({
     name = "permissions", category = "Administration", description = "Manage Molly command permission overrides",
-    permission = "manage_guild", default_member_permissions = DiscordPermissions.flags.manage_guild,
+    -- Keep Discord's existing command-level permission metadata during the
+    -- schema migration. Router authorization still enforces Manage Server.
+    permission = "manage_guild",
     molly_permission = false,
     options = {
       { type = 1, name = "allow", description = "Allow a user, role, channel or whole server", options = {

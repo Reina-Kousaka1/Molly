@@ -68,7 +68,7 @@ function Information.register(router, app)
     end
     respond(ctx, #ids > 0 and ("Your role IDs: " .. table.concat(ids, ", ")) or "No additional roles.")
   end)
-  register("permissions", "Show selected effective permissions", function(ctx)
+  register("my-permissions", "Show selected effective permissions", function(ctx)
     local value = ctx.member and ctx.member.permissions
     if type(value) ~= "string" then respond(ctx, "Your effective permissions are unavailable."); return end
     local names = {}

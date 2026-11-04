@@ -6,23 +6,7 @@ local SeaWorldConnector = require("src.persistence.seaworld_connector")
 local MusicAdapter = require("src.music.adapter")
 local LavalinkClient = require("src.music.lavalink_client")
 local CommandRouter = require("src.commands.router")
-local SmokeCommands = require("src.commands.smoke")
-local InformationCommands = require("src.commands.information")
-local EconomyCommands = require("src.commands.economy")
-local ShopCommands = require("src.commands.shop")
-local InventoryCommands = require("src.commands.inventory")
-local MiningCommands = require("src.commands.mining")
-local FashionCommands = require("src.commands.fashion")
-local ModeCommands = require("src.commands.mode")
-local SephoraCommands = require("src.commands.sephora")
-local ContentCommands = require("src.commands.content")
-local UserSettingsCommands = require("src.commands.user_settings")
-local ModerationCommands = require("src.commands.moderation")
-local StaffCommands = require("src.commands.staff")
-local MusicCommands = require("src.commands.music")
-local MusicPanelCommands = require("src.commands.music_panel")
-local VoiceCommands = require("src.commands.voice")
-local AdminCommands = require("src.commands.admin")
+local RegisterCommands = require("src.commands.register_all")
 local GuildStore = require("src.persistence.guild_store")
 local GlobalStore = require("src.persistence.global_store")
 local Ledger = require("src.economy.ledger")
@@ -35,8 +19,6 @@ local Sephora = require("src.modes.sephora")
 local ContentPolicy = require("src.content.policy")
 local UserSettings = require("src.settings.user")
 local Metrics = require("src.observability.metrics")
-local Cases = require("src.moderation.cases")
-local StaffDirectory = require("src.staff.directory")
 local Blacklist = require("src.admin.blacklist")
 local Developer = require("src.admin.developer")
 local Lifecycle = require("src.admin.lifecycle")
@@ -47,20 +29,13 @@ local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
-local SettingsCommands = require("src.commands.settings")
 local PermissionEngine = require("src.permissions.engine")
-local PermissionCommands = require("src.commands.permissions")
 local AFK = require("src.community.afk")
 local Greetings = require("src.community.greetings")
 local ActionLog = require("src.community.action_log")
 local CommunityEvents = require("src.community.events")
 local SelfRoles = require("src.community.self_roles")
 local Starboard = require("src.community.starboard")
-local AFKCommands = require("src.commands.afk")
-local GreetingCommands = require("src.commands.greetings")
-local ActionLogCommands = require("src.commands.action_logs")
-local SelfRoleCommands = require("src.commands.self_roles")
-local StarboardCommands = require("src.commands.starboard")
 local timer = require("timer")
 local uv = require("uv")
 local DiscordBootstrap = require("src.discord.bootstrap")
@@ -124,26 +99,10 @@ commands:set_gate(function(ctx)
   if not ok then return false, "access_unavailable" end
   return entry == nil, entry and "blacklisted" or nil
 end)
-SmokeCommands.register(commands, app, { clock = function() return uv.now() end })
-InformationCommands.register(commands, app)
-EconomyCommands.register(commands, ledger, { logger = logger, settings = guild_settings })
-ShopCommands.register(commands, shop, guild_settings)
-InventoryCommands.register(commands, inventory)
-MiningCommands.register(commands, mining)
-FashionCommands.register(commands, fashion)
-ModeCommands.register(commands, modes, { logs = action_log })
-SephoraCommands.register(commands, modes, sephora)
-ContentCommands.register(commands, guild_settings, content_policy, { logs = action_log })
-UserSettingsCommands.register(commands, user_settings)
-ModerationCommands.register(commands, Cases.new(store), { logs = action_log })
-StaffCommands.register(commands, StaffDirectory.new(store))
 local music_panel = MusicPanel.new(store)
 local music_manager = MusicManager.new(music, { panel = music_panel, logger = logger })
 music_panel.manager = music_manager
-MusicCommands.register(commands, music_manager)
-MusicPanelCommands.register(commands, music_panel)
 local dynamic_voice = DynamicVoice.new(store, { music = music_manager, logger = logger })
-VoiceCommands.register(commands, dynamic_voice)
 local bootstrap
 local terminating = false
 local function terminate(kind)
@@ -153,12 +112,6 @@ local function terminate(kind)
   local code = kind == "restart" and Lifecycle.EXIT_RESTART or (kind == "update" and Lifecycle.EXIT_UPDATE or Lifecycle.EXIT_SHUTDOWN)
   os.exit(code)
 end
-AdminCommands.register(commands, {
-  owners = config.developers, blacklist = blacklist,
-  developer = Developer.new({ ledger = ledger, store = store, inventory = inventory, metrics = metrics, seaworld = sea_world,
-    started_at = function() return app.started_at end }),
-  lifecycle = lifecycle, updater = updater, terminate = terminate,
-})
 local function bind_client_events(client)
   assert(client and type(client.on) == "function", "Discord client is required")
   dynamic_voice:set_runtime(client.rest, client, nil)
@@ -169,16 +122,23 @@ end
 local presence = Presence.new({ logger = logger, schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval,
   write = function(text) return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
 local prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
-SettingsCommands.register(commands, guild_settings, { on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end })
-PermissionCommands.register(commands, permission_engine)
-AFKCommands.register(commands, afk)
-GreetingCommands.register(commands, guild_settings, greetings, { logs = action_log,
-  member_events_enabled = config.discord.guild_members_intent })
-ActionLogCommands.register(commands, guild_settings, action_log)
-SelfRoleCommands.register(commands, self_roles, { logs = action_log })
-StarboardCommands.register(commands, guild_settings, { logs = action_log })
+RegisterCommands.register(commands, {
+  app = app, clock = function() return uv.now() end, ledger = ledger, logger = logger,
+  guild_settings = guild_settings, shop = shop, inventory = inventory, mining = mining,
+  fashion = fashion, modes = modes, sephora = sephora, content_policy = content_policy,
+  user_settings = user_settings, store = store, action_log = action_log,
+  music_manager = music_manager, music_panel = music_panel, dynamic_voice = dynamic_voice,
+  developers = config.developers, blacklist = blacklist, developer = Developer.new({ ledger = ledger,
+    store = store, inventory = inventory, metrics = metrics, seaworld = sea_world,
+    started_at = function() return app.started_at end }),
+  lifecycle = lifecycle, updater = updater, terminate = terminate,
+  permission_engine = permission_engine, afk = afk, greetings = greetings,
+  self_roles = self_roles, member_events_enabled = config.discord.guild_members_intent,
+  on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end,
+})
 bootstrap = DiscordBootstrap.new({ discord = discord, intents = gateway_intents, app = app, commands = commands,
-  logger = logger, presence = presence, on_client = bind_client_events }):build()
+  logger = logger, presence = presence, on_client = bind_client_events,
+  allow_permissions_options_migration = config.discord.migrate_permissions_command }):build()
 local prefix_registered, prefix_reason = prefix_commands:register(bootstrap.bot)
 if not prefix_registered then
   logger:warn("prefix_commands_unavailable", { detail = prefix_reason or "event_unavailable" })

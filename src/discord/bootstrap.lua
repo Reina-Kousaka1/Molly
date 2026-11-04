@@ -23,6 +23,7 @@ function Bootstrap.new(options)
     logger = options.logger,
     presence = options.presence,
     on_client = options.on_client,
+    allow_permissions_options_migration = options.allow_permissions_options_migration == true,
     spawn = options.spawn or default_spawn,
     events = EventRouter.new(options.logger),
     bot = nil,
@@ -42,7 +43,9 @@ function Bootstrap:build()
   if self.bot.command_tree then
     local logger = self.logger
     self.bot.sync_commands = function(bot)
-      local call_ok, synced, outcome, details = pcall(SafeSync.run, bot)
+      local call_ok, synced, outcome, details = pcall(SafeSync.run, bot, {
+        allow_permissions_options_migration = self.allow_permissions_options_migration,
+      })
       if not call_ok or not synced then
         self.sync_ok = false
         if logger then

@@ -22,6 +22,8 @@ for suite in \
   tests/sprint.lua \
   tests/economy_commands.lua \
   tests/prefix_commands.lua \
+  tests/command_registration_all.lua \
+  tests/command_migration.lua \
   tests/embeds.lua
 do
   "$LUA_BIN" "$suite"

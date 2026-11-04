@@ -51,12 +51,15 @@ function Config.load(env)
   local lavalink_timeout_ms = positive_integer(read(env, "MOLLY_LAVALINK_TIMEOUT_MS"), 1000, 100, 30000, music_errors, "MOLLY_LAVALINK_TIMEOUT_MS")
   local developers = ids(read(env, "MOLLY_DEVELOPER_IDS"), errors)
   local guild_members_intent = boolean(read(env, "MOLLY_GUILD_MEMBERS_INTENT"), false, errors, "MOLLY_GUILD_MEMBERS_INTENT")
+  local migrate_permissions_command = boolean(read(env, "MOLLY_MIGRATE_PERMISSIONS_COMMAND"), false,
+    errors, "MOLLY_MIGRATE_PERMISSIONS_COMMAND")
   local updater_url, updater_token = trim(read(env, "MOLLY_UPDATER_URL")), trim(read(env, "MOLLY_UPDATER_TOKEN"))
   if not local_updater_url(updater_url) then errors[#errors + 1] = "MOLLY_UPDATER_URL" end
   if (updater_url and not updater_token) or (updater_token and not updater_url) then errors[#errors + 1] = updater_url and "MOLLY_UPDATER_TOKEN" or "MOLLY_UPDATER_URL" end
   if #errors > 0 then return nil, errors end
   return {
-    discord = { token = token, guild_members_intent = guild_members_intent }, developers = developers,
+    discord = { token = token, guild_members_intent = guild_members_intent,
+      migrate_permissions_command = migrate_permissions_command }, developers = developers,
     integrations = { spotify_client_id = trim(read(env, "MOLLY_SPOTIFY_CLIENT_ID")), spotify_client_secret = trim(read(env, "MOLLY_SPOTIFY_CLIENT_SECRET")), youtube_api_key = trim(read(env, "MOLLY_YOUTUBE_API_KEY")) },
     music = { lavalink_url = lavalink_url, lavalink_password = lavalink_password, lavalink_timeout_ms = lavalink_timeout_ms, configuration_errors = music_errors },
     seaworld = { socket = sea_world_socket, health_url = sea_world_url, timeout_ms = timeout_ms, retry_attempts = retry_attempts },
