@@ -170,6 +170,6 @@ is test-only validated and no Discord command was changed.
 - The production environment does not set `MOLLY_MIGRATE_PERMISSIONS_COMMAND`;
   its default remains false. The bot remains stopped on the preceding image.
 - The code is on GitHub branch `fix/permissions-command-schema-migration` at
-  commit `3384565117282f4d183a047c33c07d2e66daf2a6`. `main` remains at the
-  approved baseline. No pull request was opened and no Discord migration or
-  production start was performed.
+  its reviewed feature-branch head. `main` remains at the approved baseline.
+  No pull request was opened and no Discord migration or production start was
+  performed.
