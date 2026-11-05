@@ -16,12 +16,12 @@ function Information.register(router, app)
     router:register({ name = name, description = description, execute = execute, options = options,
       category = category or "Information", prefix = prefix and { arguments = {} } or nil })
   end
-  register("uptime", "Show how long Molly has been running", function(ctx)
+  register("uptime", "Show how long KiddyyMolly has been running", function(ctx)
     local seconds = math.max(0, os.time() - (app.started_at or os.time()))
     respond(ctx, string.format("Uptime: %dd %dh %dm", math.floor(seconds / 86400), math.floor(seconds / 3600) % 24, math.floor(seconds / 60) % 60))
   end, nil, "Utility", true)
-  register("botinfo", "Show Molly information", function(ctx)
-    respond(ctx, "Molly · Discord management bot\n" .. app:health_message())
+  register("botinfo", "Meet KiddyyMolly and check her bot status", function(ctx)
+    respond(ctx, "KiddyyMolly 🎀💗 · Your preppy Discord assistant\n" .. app:health_message())
   end, nil, "Information", true)
   register("serverinfo", "Show information about this server", function(ctx)
     if not Store.valid_id(guild(ctx)) then respond(ctx, "This command requires a server."); return end
@@ -77,7 +77,7 @@ function Information.register(router, app)
     end
     respond(ctx, #names > 0 and ("Selected permissions: " .. table.concat(names, ", ")) or "No selected moderation permissions.")
   end)
-  register("help", "List available Molly commands", function(ctx)
+  register("help", "Browse KiddyyMolly's commands", function(ctx)
     local groups, order = {}, { "Moderation", "Staff / HR", "Economy", "Bank", "Information", "Utility", "Music", "Administration" }
     local surface = ctx.source == "message" and "prefix" or "slash"
     for _, definition in ipairs(router:list(surface)) do
