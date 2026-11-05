@@ -1,6 +1,10 @@
 local Catalog = {}
 
 local items = {
+  { id = "rose_glow", name = "Rose Glow beauty look", description = "Permanent unlockable virtual beauty look.", price = 350, kind = "fashion", slot = "outfit" },
+  { id = "citrus_satin", name = "Citrus Satin beauty look", description = "Permanent unlockable virtual beauty look.", price = 420, kind = "fashion", slot = "outfit" },
+  { id = "lilac_moon", name = "Lilac Moon beauty look", description = "Permanent unlockable virtual beauty look.", price = 550, kind = "fashion", slot = "outfit" },
+  { id = "soft_gold", name = "Soft Gold beauty look", description = "Permanent unlockable virtual beauty look.", price = 700, kind = "fashion", slot = "outfit" },
   { id = "pickaxe", name = "Sturdy pickaxe", description = "A reusable tool for virtual mining.", price = 100, kind = "tool" },
   { id = "rose_crown", name = "Rose crown", description = "A virtual fashion accessory.", price = 250, kind = "fashion", slot = "head" },
   { id = "silver_cape", name = "Silver cape", description = "A virtual outfit accessory.", price = 350, kind = "fashion", slot = "outfit" },
