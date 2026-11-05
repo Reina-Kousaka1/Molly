@@ -22,8 +22,8 @@ function Commands.register(router, shop, settings)
     options = {
       { type = 1, name = "status", description = "Show the pink shop status" },
       { type = 1, name = "catalog", description = "Browse available virtual items" },
-      { type = 1, name = "looks", description = "Browse free Sephora-inspired virtual looks" },
-      { type = 1, name = "try", description = "Try a free virtual look", options = {
+      { type = 1, name = "looks", description = "Browse unlockable Sephora-inspired looks" },
+      { type = 1, name = "try", description = "Wear a beauty look you already own", options = {
         { type = 3, name = "look", description = "Virtual style", required = true, choices = look_choices },
       } },
       { type = 1, name = "lookstatus", description = "Show your selected virtual look" },
@@ -45,7 +45,7 @@ function Commands.register(router, shop, settings)
       if action == "status" then
         local ok, value = shop:status(guild)
         if not ok then Util.reply(ctx, "Shop settings are unavailable."); return end
-        Util.reply(ctx, "🎀 KiddyyMolly shop: " .. (value.enabled and "open" or "closed") .. ". All items use in-game coins.")
+        Util.reply(ctx, "🎀 KiddyyMolly shop: " .. (value.enabled and "open" or "closed") .. ". Earn coins with economy commands, then buy your favorite looks.")
       elseif action == "catalog" then
         local ok, result = shop:list(guild)
         if not ok then
@@ -64,16 +64,17 @@ function Commands.register(router, shop, settings)
         lines[#lines + 1] = "A pickaxe is required to mine; resources are sold through `/shop sell`."
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "looks" then
-        local lines = { "🎀 Free virtual beauty looks (no coins or real payments):" }
+        local lines = { "🎀 Beauty looks: earn coins, buy with `/shop buy`, then wear with `/shop try`:" }
         for _, look in ipairs(shop:lookbook()) do
-          lines[#lines + 1] = look.name .. " — " .. look.description
+          local item = Catalog.get(look.id)
+          lines[#lines + 1] = look.name .. " (`" .. look.id .. "`) — " .. tostring(item and item.price or "?") .. " coins"
         end
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "try" then
         local look_id = Util.arg(ctx, "look")
         local ok, result = shop.sephora:try_on(guild, user, look_id, ctx.request_id or ctx.interaction_id)
-        if not ok then Util.reply(ctx, "That look could not be selected (" .. Util.safe(result, 40) .. ")."); return end
-        Util.reply(ctx, "🎀 Virtual look selected: " .. Util.safe(result.look_id, 40) .. ". No coins were spent.")
+        if not ok then Util.reply(ctx, result == "not_owned" and "You need to buy this look first using `/shop buy` and coins earned through economy commands." or ("That look could not be selected (" .. Util.safe(result, 40) .. ").")); return end
+        Util.reply(ctx, "🎀 Virtual look selected: " .. Util.safe(result.look_id, 40) .. ". Previously purchased with coins.")
       elseif action == "lookstatus" then
         local ok, result = shop.sephora:get(guild, user)
         if not ok then Util.reply(ctx, "Your virtual look is unavailable."); return end
