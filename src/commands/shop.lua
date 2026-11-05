@@ -14,12 +14,20 @@ function Commands.register(router, shop, settings)
   for _, item in ipairs(Catalog.list()) do buy_choices[#buy_choices + 1] = { name = item.name .. " — " .. item.price .. " coins", value = item.id } end
   for _, item in ipairs(Catalog.resources()) do resource_choices[#resource_choices + 1] = { name = item.name .. " — sell for " .. item.sell_price .. " coins", value = item.id } end
 
+  local look_choices = {}
+  for _, look in ipairs(shop:lookbook()) do look_choices[#look_choices + 1] = { name = look.name, value = look.id } end
   local quantity = { type = 4, name = "quantity", description = "Whole item quantity", required = false, min_value = 1, max_value = 99 }
   router:register({
     name = "shop", category = "Economy", description = "Browse KiddyyMolly\'s permanent pink economy shop",
     options = {
       { type = 1, name = "status", description = "Show the pink shop status" },
       { type = 1, name = "catalog", description = "Browse available virtual items" },
+      { type = 1, name = "looks", description = "Browse free Sephora-inspired virtual looks" },
+      { type = 1, name = "try", description = "Try a free virtual look", options = {
+        { type = 3, name = "look", description = "Virtual style", required = true, choices = look_choices },
+      } },
+      { type = 1, name = "lookstatus", description = "Show your selected virtual look" },
+      { type = 1, name = "clearlook", description = "Remove your selected virtual look" },
       { type = 1, name = "buy", description = "Buy a beauty or fashion item with coins", options = {
         { type = 3, name = "item", description = "Catalog item", required = true, choices = buy_choices }, quantity,
       } },
@@ -55,6 +63,24 @@ function Commands.register(router, shop, settings)
         end
         lines[#lines + 1] = "A pickaxe is required to mine; resources are sold through `/shop sell`."
         Util.reply(ctx, table.concat(lines, "\n"))
+      elseif action == "looks" then
+        local lines = { "🎀 Free virtual beauty looks (no coins or real payments):" }
+        for _, look in ipairs(shop:lookbook()) do
+          lines[#lines + 1] = look.name .. " — " .. look.description
+        end
+        Util.reply(ctx, table.concat(lines, "\n"))
+      elseif action == "try" then
+        local look_id = Util.arg(ctx, "look")
+        local ok, result = shop.sephora:try_on(guild, user, look_id, ctx.request_id or ctx.interaction_id)
+        if not ok then Util.reply(ctx, "That look could not be selected (" .. Util.safe(result, 40) .. ")."); return end
+        Util.reply(ctx, "🎀 Virtual look selected: " .. Util.safe(result.look_id, 40) .. ". No coins were spent.")
+      elseif action == "lookstatus" then
+        local ok, result = shop.sephora:get(guild, user)
+        if not ok then Util.reply(ctx, "Your virtual look is unavailable."); return end
+        Util.reply(ctx, result and ("Current virtual look: " .. Util.safe(result.look_id, 40)) or "No virtual look selected.")
+      elseif action == "clearlook" then
+        local ok, removed = shop.sephora:clear(guild, user)
+        Util.reply(ctx, not ok and "Could not clear your virtual look." or (removed and "Virtual look cleared." or "No virtual look selected."))
       elseif action == "enable" or action == "disable" then
         if not Util.is_manager(ctx) then Util.reply(ctx, "You need Manage Server to configure the shop."); return end
         local ok = shop:set_enabled(guild, action == "enable")
@@ -92,7 +118,7 @@ function Commands.register(router, shop, settings)
         Util.reply(ctx, string.format("Sold %d × %s for %s. Wallet: %s. Money ID: `%s`.", result.quantity,
           Util.safe(result.name, 80), money(settings, guild, result.charged), money(settings, guild, result.wallet), Util.safe(result.money_id, 24)))
       else
-        Util.reply(ctx, "Choose status, catalog, buy, sell, enable, or disable.")
+        Util.reply(ctx, "Choose catalog, buy, looks, try, lookstatus, clearlook, sell, status, enable, or disable.")
       end
     end,
   })
