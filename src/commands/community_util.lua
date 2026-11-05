@@ -22,12 +22,18 @@ end
 
 function Util.reply(ctx, text)
   if ctx._molly_deferred then return ctx:edit(text) end
-  return ctx:respond(text, { ephemeral = true })
+  return ctx:respond(text, { ephemeral = ctx._molly_public_reply ~= true })
 end
 
-function Util.defer(ctx)
+-- Existing sensitive commands remain private unless they explicitly opt in.
+-- Discord locks visibility at the initial acknowledgement, so the public
+-- choice must be made before the deferred response is sent.
+function Util.defer(ctx, options)
   local Response = require("src.discord.response")
-  return Response.defer(ctx, { ephemeral = true })
+  local public = options and options.public == true
+  local ok = Response.defer(ctx, { ephemeral = not public })
+  if ok then ctx._molly_public_reply = public end
+  return ok
 end
 
 function Util.is_manager(ctx)
