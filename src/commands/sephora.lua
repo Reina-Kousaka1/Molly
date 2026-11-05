@@ -19,7 +19,7 @@ function Commands.register(router, modes, sephora)
     execute = function(ctx)
       local guild, user = ctx.guild and ctx.guild.id, ctx.author and ctx.author.id
       if not Store.valid_id(guild) or not Store.valid_id(user) then ctx:respond("This command requires a server member.", { ephemeral = true }); return end
-      if not Util.defer(ctx) then return end
+      if not Util.defer(ctx, { public = true }) then return end
       local ok, mode = modes:get(guild)
       if not ok or mode.id ~= "sephora" then Util.reply(ctx, "This server is not using Virtual Sephora mode. Ask a server manager to change `/mode`."); return end
       local action = ctx.molly_subcommand
