@@ -5,20 +5,17 @@ local Catalog = require("src.economy.catalog")
 local Commands = {}
 
 function Commands.register(router, fashion)
-  local item_choices = {}
-  for _, item in ipairs(Catalog.list()) do
-    if item.kind == "fashion" then item_choices[#item_choices + 1] = { name = item.name, value = item.id } end
-  end
   router:register({
     name = "fashion", category = "Economy", description = "Equip or remove virtual fashion items you own in this server",
     options = {
       { type = 1, name = "status", description = "Show your equipped fashion" },
       { type = 1, name = "equip", description = "Equip an owned fashion item", options = {
-        { type = 3, name = "item", description = "Owned fashion item", required = true, choices = item_choices },
+        { type = 3, name = "item", description = "Owned catalog variant ID", required = true, max_length = 32 },
       } },
       { type = 1, name = "unequip", description = "Remove an equipped item", options = {
         { type = 3, name = "slot", description = "Fashion slot", required = true, choices = {
           { name = "Head", value = "head" }, { name = "Outfit", value = "outfit" }, { name = "Accessory", value = "accessory" },
+          { name = "Ring", value = "ring" }, { name = "Necklace", value = "necklace" }, { name = "Bracelet", value = "bracelet" },
         } },
       } },
     },
@@ -37,7 +34,8 @@ function Commands.register(router, fashion)
         local lines = {}
         for slot, item_id in pairs(result.equipped) do
           local item = Catalog.get(item_id)
-          lines[#lines + 1] = string.format("%s: %s", Util.safe(slot, 24), Util.safe(item and item.name or item_id, 80))
+          local label = item and (item.name .. (item.variant and (" (" .. item.variant .. ")") or "")) or item_id
+          lines[#lines + 1] = string.format("%s: %s", Util.safe(slot, 24), Util.safe(label, 100))
         end
         table.sort(lines)
         Util.reply(ctx, #lines > 0 and ("Equipped fashion:\n" .. table.concat(lines, "\n")) or "You have no fashion items equipped. Use `/inventory` to see owned items.")

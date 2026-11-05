@@ -18,6 +18,7 @@ for suite in \
   tests/personality_engine.lua \
   tests/community.lua \
   tests/economy_v2.lua \
+  tests/retail_catalog.lua \
   tests/observability.lua \
   tests/music_voice.lua \
   tests/moderation_v2.lua \
@@ -29,5 +30,6 @@ do
   if ! "$LUA_BIN" "$suite"; then test_status=1; fi
 done
 if ! "$LUA_BIN" tests/stress.lua; then test_status=1; fi
+if ! "$LUA_BIN" tests/economy_simulation.lua; then test_status=1; fi
 if ! "$PYTHON_BIN" tests/lavalink_env_transfer.py; then test_status=1; fi
 exit "$test_status"

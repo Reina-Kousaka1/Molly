@@ -76,7 +76,10 @@ function Economy.register(router, ledger, options)
         return failed(result)
       end
       local format = money(guild)
-      return string.format("%s: %s. Wallet: %s; bank: %s.", kind, format(result.amount), format(result.wallet), format(result.bank))
+      local streak = result.streak and string.format(" Streak: %d%s.", result.streak,
+        (result.streak_bonus or 0) > 0 and (" (bonus " .. format(result.streak_bonus) .. ")") or "") or ""
+      return string.format("%s: %s.%s Wallet: %s; bank: %s.", kind, format(result.amount), streak,
+        format(result.wallet), format(result.bank))
     end
   end
   add("deposit", "Bank", "Move coins from wallet to bank", change("deposit"), { amount_option }, { "amount" })

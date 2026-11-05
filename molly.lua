@@ -163,6 +163,7 @@ local personality = Personality.new(store, { logger = logger, timezone_offset_mi
   if not rest or type(rest.send_message) ~= "function" then return false end
   return rest:send_message(channel, { content = message })
 end })
+shop:set_personality(personality)
 local function bind_client_events(client)
   assert(client and type(client.on) == "function", "Discord client is required")
   dynamic_voice:set_runtime(client.rest, client, nil)

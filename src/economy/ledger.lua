@@ -10,6 +10,21 @@ local MINING_COOLDOWN = 30
 local MAX_CACHED_RECEIPT_INDEXES = 8
 local MAX_RECEIPT_GENERATION = 9007199254740991
 local BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+local REWARDS = {
+  daily = { minimum = 1500, maximum = 3500, cooldown = 86400, streak_window = 172800,
+    milestones = { { streak = 5, bonus = 250 }, { streak = 10, bonus = 500 }, { streak = 25, bonus = 750 } } },
+  weekly = { minimum = 6000, maximum = 12000, cooldown = 604800, streak_window = 1209600,
+    milestones = { { streak = 4, bonus = 1500 }, { streak = 12, bonus = 3000 } } },
+  work = { minimum = 400, maximum = 1800, cooldown = 21600 },
+}
+
+local function streak_bonus(spec, streak)
+  local bonus = 0
+  for _, milestone in ipairs(spec.milestones or {}) do
+    if streak >= milestone.streak then bonus = milestone.bonus end
+  end
+  return bonus
+end
 
 local function base36(decimal)
   local output = ""
@@ -59,7 +74,8 @@ local function account(data, id, create)
     -- Account balances are live financial state, not disposable history. Do not
     -- hard-cap guild accounts: evicting them loses money and refusing new IDs
     -- permanently blocks later participants.
-    a = { wallet = 0, bank = 0, daily = 0, weekly = 0, work = 0 }
+    a = { wallet = 0, bank = 0, daily = 0, weekly = 0, work = 0, daily_claimed = false,
+      weekly_claimed = false, work_claimed = false, daily_streak = 0, weekly_streak = 0 }
     data.accounts[id] = a
   end
   if not a then return { wallet = 0, bank = 0, daily = 0, weekly = 0, work = 0 } end
@@ -348,6 +364,14 @@ local function fingerprint_matches(stored, requested)
       if type(requested.amount) ~= "number" or requested.amount ~= stored.amount then return false end
     elseif stored[key] ~= requested[key] then return false end
   end
+  local left, right = stored.price_snapshot, requested.price_snapshot
+  if (left == nil) ~= (right == nil) then return false end
+  if left then
+    for _, key in ipairs({ "eu_cents", "us_cents", "fx_usd_per_eur_x10000", "fx_as_of",
+      "fx_source", "rounding", "coin_price", "checked_at" }) do
+      if left[key] ~= right[key] then return false end
+    end
+  end
   return true
 end
 
@@ -551,6 +575,7 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
   request_type = request_type or "interaction"
   if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
+  local base_reward_result, streak_result, streak_bonus_result
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
     operation = kind, source = user, target = kind == "pay" and other or nil,
     amount = (kind == "pay" or kind == "deposit" or kind == "withdraw") and request_amount(input) or nil }
@@ -583,21 +608,45 @@ function Ledger:change(guild, user, interaction, kind, input, other, request_typ
       if b.wallet + value > MAX then return false, "overflow" end
       a.wallet, b.wallet = a.wallet - value, b.wallet + value
     else
-      local rewards = { daily = { 100, 86400 }, weekly = { 500, 604800 }, work = { 20, 3600 } }
-      local spec = rewards[kind]
+      local spec = REWARDS[kind]
       if not spec then return false, "invalid_action" end
       local last = a[kind] or 0
+      local claim_key = kind .. "_claimed"
+      local claimed = a[claim_key]
+      if claimed ~= nil and type(claimed) ~= "boolean" then return false, "invalid_store" end
+      if claimed == nil then claimed = last > 0 end
       if type(now) ~= "number" or now ~= now or now == math.huge or now == -math.huge
         or type(last) ~= "number" or last ~= last or last < 0 or now < last
-        or (last > 0 and now - last < spec[2]) then return false, "cooldown" end
-      value = spec[1]
+        or (claimed and now - last < spec.cooldown) then return false, "cooldown" end
+      local random_ok, reward = pcall(self.random, spec.minimum, spec.maximum)
+      if not random_ok or type(reward) ~= "number" or reward % 1 ~= 0
+        or reward < spec.minimum or reward > spec.maximum then return false, "random_unavailable" end
+      value = reward
+      base_reward_result = reward
+      local streak, bonus = nil, 0
+      if spec.milestones then
+        local streak_key = kind .. "_streak"
+        local previous_streak = a[streak_key]
+        if previous_streak ~= nil and (type(previous_streak) ~= "number" or previous_streak % 1 ~= 0
+          or previous_streak < 0 or previous_streak > 1000000) then return false, "invalid_store" end
+        previous_streak = previous_streak or (claimed and 1 or 0)
+        streak = claimed and now - last <= spec.streak_window and previous_streak + 1 or 1
+        bonus = streak_bonus(spec, streak)
+        value = value + bonus
+        a[streak_key] = streak
+        streak_result, streak_bonus_result = streak, bonus
+      end
       if a.wallet + value > MAX then return false, "overflow" end
       a.wallet, a[kind] = a.wallet + value, now
+      a[claim_key] = true
     end
     local record = { id = record_id, guild = guild, user = user, kind = kind,
       amount = value, counterparty = other or "", timestamp = now, status = "committed" }
     append_journal(data, record)
     local result = { id = record.id, money_id = money_id(record.id), amount = value, wallet = a.wallet, bank = a.bank }
+    if kind == "daily" or kind == "weekly" then
+      result.base_reward, result.streak, result.streak_bonus = base_reward_result, streak_result, streak_bonus_result or 0
+    end
     local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
     if not saved then return false, "invalid_store" end
     remember(index, false, receipt_delta)
@@ -607,7 +656,7 @@ end
 
 -- A shop purchase moves coins, writes the canonical Money-ID journal row,
 -- records its retry receipt, and grants inventory in the same guild transaction.
-function Ledger:purchase(guild, user, interaction, item_id, price, quantity, request_type)
+function Ledger:purchase(guild, user, interaction, item_id, price, quantity, request_type, price_snapshot)
   if not Store.valid_id(user) or not Store.valid_id(interaction) then return false, "invalid_argument" end
   request_type = request_type or "interaction"
   if request_type ~= "interaction" and request_type ~= "message" then return false, "invalid_request" end
@@ -616,8 +665,13 @@ function Ledger:purchase(guild, user, interaction, item_id, price, quantity, req
     and type(quantity) == "number" and quantity % 1 == 0 and quantity >= 1 and quantity <= 99
     and price <= math.floor(MAX / quantity) then total = price * quantity end
   local record_id = (request_type == "message" and "EP" or "E") .. interaction
+  if price_snapshot ~= nil then
+    local RetailPricing = require("src.economy.retail_pricing")
+    if not RetailPricing.valid_snapshot(price_snapshot, price) then return false, "invalid_price_snapshot" end
+  end
   local fingerprint = { guild = guild, request_id = interaction, request_type = request_type,
-    operation = "purchase", source = user, amount = total, item_id = item_id, quantity = quantity }
+    operation = "purchase", source = user, amount = total, item_id = item_id, quantity = quantity,
+    price_snapshot = price_snapshot }
   return self:_run_with_receipts(guild, function(data, cached, remember)
     local request_state, prior, changed, oldest, index = check_request(data, guild, request_type, interaction, fingerprint, cached)
     remember(index, not changed)
@@ -632,10 +686,12 @@ function Ledger:purchase(guild, user, interaction, item_id, price, quantity, req
     local now = self.clock()
     a.wallet = a.wallet - total
     local record = { id = record_id, guild = guild, user = user, kind = "purchase",
-      amount = total, counterparty = item_id, timestamp = now, status = "committed" }
+      amount = total, counterparty = item_id, timestamp = now, status = "committed",
+      price_snapshot = price_snapshot }
     append_journal(data, record)
     local result = { id = record.id, money_id = money_id(record.id), amount = total, wallet = a.wallet,
-      bank = a.bank, operation = "purchase", user = user, item_id = item_id, quantity = quantity }
+      bank = a.bank, operation = "purchase", user = user, item_id = item_id, quantity = quantity,
+      price_snapshot = price_snapshot }
     local saved, receipt_delta = save_receipt(data, request_type, interaction, fingerprint, result, oldest, index)
     if not saved then return false, "invalid_store" end
     remember(index, false, receipt_delta)
@@ -733,4 +789,5 @@ Ledger.mining_cooldown = MINING_COOLDOWN
 Ledger.max_journal_records = MAX_JOURNAL_RECORDS
 Ledger.max_economy_receipts = MAX_ECONOMY_RECEIPTS
 Ledger.max_cached_receipt_indexes = MAX_CACHED_RECEIPT_INDEXES
+Ledger.rewards = REWARDS
 return Ledger

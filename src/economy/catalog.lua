@@ -33,7 +33,7 @@ for _, item in ipairs(items) do by_id[item.id] = item end
 
 function Catalog.get(id)
   local item = by_id[id]
-  if not item then return nil end
+  if not item then return require("src.economy.retail_catalog").get(id) end
   local copy = {}
   for key, value in pairs(item) do copy[key] = value end
   return copy
@@ -61,6 +61,7 @@ end
 
 function Catalog.slot(slot)
   return slot == "head" or slot == "outfit" or slot == "accessory"
+    or slot == "ring" or slot == "necklace" or slot == "bracelet"
 end
 
 return Catalog

@@ -59,6 +59,7 @@ local function default_state()
     last_evolved_at = 0,
     last_response_at = 0,
     last_status_joke_at = 0,
+    last_shop_reaction_at = 0,
     last_fomo_spike_at = 0,
     fomo_window_started_at = 0,
     fomo_window_gain = 0,
@@ -81,7 +82,8 @@ local function normalize_state(raw)
   end
   local current_topic = raw.current_topic or raw.topic
   if type(current_topic) == "string" and TOPICS[current_topic] then state.current_topic = current_topic end
-  for _, key in ipairs({ "next_topic_at", "last_evolved_at", "last_response_at", "last_status_joke_at", "last_fomo_spike_at", "fomo_window_started_at" }) do
+  for _, key in ipairs({ "next_topic_at", "last_evolved_at", "last_response_at", "last_status_joke_at",
+    "last_shop_reaction_at", "last_fomo_spike_at", "fomo_window_started_at" }) do
     state[key] = clamp(raw[key], 0, 4102444800)
   end
   if state.last_evolved_at == 0 then state.last_evolved_at = clamp(raw.updated_at, 0, 4102444800) end
@@ -105,6 +107,7 @@ local function write_state(raw, state)
   raw.last_evolved_at = state.last_evolved_at
   raw.last_response_at = state.last_response_at
   raw.last_status_joke_at = state.last_status_joke_at
+  raw.last_shop_reaction_at = state.last_shop_reaction_at
   raw.last_fomo_spike_at = state.last_fomo_spike_at
   raw.fomo_window_started_at = state.fomo_window_started_at
   raw.fomo_window_gain = state.fomo_window_gain
@@ -403,6 +406,32 @@ end
 
 function Engine:observe(message)
   return self:handle_message(message)
+end
+
+function Engine:observe_shop_purchase(guild, user, department)
+  if not valid_id(guild) or not valid_id(user)
+    or (department ~= "sephora" and department ~= "lululemon" and department ~= "pandora") then
+    return false, "invalid_argument"
+  end
+  local now = self.clock()
+  local topics = { sephora = "skincare", lululemon = "fashion", pandora = "accessories" }
+  local lines = {
+    sephora = { "waittt a beauty haul?! I'm literally obsessed 🎀", "GIRL the skincare shelf is calling me 😭✨" },
+    lululemon = { "STOPPP that fit is giving main character energy 💗", "the outfit agenda is thriving rn 🎀" },
+    pandora = { "the sparkle situation is actually iconic 🦋✨", "wait jewelry with the outfit?? obsessed 💅" },
+  }
+  return self:_mutate(guild, function(state)
+    local topic = topics[department]
+    state.values.obsession = clamp(state.values.obsession + 2, 0, 100)
+    state.values.mood = clamp(state.values.mood + 1, 0, 100)
+    state.interests[topic] = clamp((state.interests[topic] or 0) + 2, 0, 1000)
+    local response
+    if now - state.last_shop_reaction_at >= 1800 and safe_random(self.random, 1, 100) <= 40 then
+      response = lines[department][safe_random(self.random, 1, #lines[department])]
+      state.last_shop_reaction_at = now
+    end
+    return true, { reply = response, department = department, user = user }, true
+  end)
 end
 
 function Engine:on_disconnect()

@@ -55,6 +55,22 @@ test("message topic changes bounded FOMO, obsession, energy, and keeps data per 
   assert(other.version == 1 and other.interests.makeup == nil)
 end)
 
+test("a retail purchase develops the relevant personality interest without inflating FOMO", function()
+  local store, now = make_store(), 225000
+  local engine = make_engine(store, function() return now end)
+  local before = state_of(engine, "10")
+  local ok, result = engine:observe_shop_purchase("10", "105", "pandora")
+  assert(ok and result.department == "pandora" and type(result.reply) == "string")
+  local after = state_of(engine, "10")
+  assert(after.values.fomo == before.values.fomo)
+  assert(after.values.obsession == before.values.obsession + 2 and after.values.mood == before.values.mood + 1)
+  assert(after.interests.accessories == 2 and after.last_shop_reaction_at == now)
+  assert(state_of(engine, "11").interests.accessories == nil)
+  now = now + 60
+  ok, result = engine:observe_shop_purchase("10", "105", "pandora")
+  assert(ok and result.reply == nil, "the same shop reaction must be cooldown-limited")
+end)
+
 test("distinct active participants raise FOMO more than repeated posts from one person", function()
   local solo_store, group_store, now = make_store(), make_store(), 250000
   local solo = make_engine(solo_store, function() return now end)

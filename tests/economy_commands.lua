@@ -69,7 +69,7 @@ test("ledger keeps the E transaction ID, supports replay, and looks up legacy jo
   assert(ok and result.id == "E1566678233296928798" and result.money_id == "Mbwi530hzprtq" and #store.data["100"].journal == 1)
   local found, entry = ledger:transaction("100", "Mbwi530hzprtq")
   assert(found and entry.id == "E1566678233296928798" and entry.money_id == "Mbwi530hzprtq" and entry.user == "200" and entry.guild == "100")
-  assert(entry.kind == "daily" and entry.amount == 100 and entry.timestamp == 12345 and entry.status == "committed")
+  assert(entry.kind == "daily" and entry.amount >= 1500 and entry.amount <= 3500 and entry.timestamp == 12345 and entry.status == "committed")
   found, entry = ledger:transaction("101", "Mbwi530hzprtq")
   assert(not found and entry == "transaction_not_found")
   found, entry = ledger:transaction("100", "E0000000000000000000")

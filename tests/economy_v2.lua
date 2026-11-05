@@ -23,6 +23,9 @@ local ContentCommands = require("src.commands.content")
 local UserSettingsCommands = require("src.commands.user_settings")
 
 local total, failed = 0, 0
+local function new_ledger(store_value, clock, random)
+  return Ledger.new(store_value, clock, random or function(minimum) return minimum end)
+end
 local function test(name, fn)
   total = total + 1
   local ok, err = pcall(fn)
@@ -76,8 +79,9 @@ local settings = Settings.new(store)
 local user_settings = UserSettings.new(global)
 local modes = Modes.new(settings)
 local sephora = Sephora.new(store, modes, function() return now end)
-local ledger = Ledger.new(store, function() return now end, function(minimum, maximum)
+local ledger = new_ledger(store, function() return now end, function(minimum, maximum)
   local value = table.remove(random_values, 1)
+  if value == nil then return minimum end
   assert(type(value) == "number" and value >= minimum and value <= maximum, "unexpected random range/result")
   return value
 end)
@@ -104,6 +108,53 @@ test("new mode, mature-content protection, and shop are additive and disabled by
   assert(ok and value.enabled == false)
   assert(Schema.normalize("content", { mature_enabled = true, mature_channels = {} }) == nil)
   assert(not store.data["10"] or store.data["10"].settings == nil, "legacy settings must remain in place without a migration")
+end)
+
+test("retail variant purchase is atomic, idempotent, guild-scoped, and keeps its price snapshot", function()
+  store.data["73"] = { guild = "73", accounts = { ["730"] = { wallet = 100000, bank = 0, daily = 0, weekly = 0, work = 0 } },
+    cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  assert(shop:set_enabled("73", true))
+  local listed, products = shop:retail_browse("73", "pandora")
+  assert(listed and #products == 3)
+  local detail_ok, detail = shop:retail_item("73", "pandora_heart")
+  assert(detail_ok and detail.variants[1].id == "heartneck")
+  local purchase_ok, purchase = shop:buy("73", "730", "73001", "heartneck", 1)
+  assert(purchase_ok and purchase.mode == "retail" and purchase.charged == purchase.price_each)
+  assert(purchase.price_snapshot and purchase.price_snapshot.coin_price == purchase.price_each)
+  local state = store.data["73"]
+  assert(state.accounts["730"].wallet == 100000 - purchase.charged)
+  assert(state.molly_v2.inventory.items["730"].heartneck == 1)
+  assert(state.journal[#state.journal].price_snapshot.checked_at == "2026-11-05")
+  local replay_ok, replay = shop:buy("73", "730", "73001", "heartneck", 1)
+  assert(replay_ok and replay.wallet == purchase.wallet and state.accounts["730"].wallet == purchase.wallet)
+  local conflict, reason = shop:buy("73", "730", "73001", "rainbowneck", 1)
+  assert(not conflict and reason == "replay_conflict" and state.accounts["730"].wallet == purchase.wallet)
+  local inventory_ok, inventory_value = inventory:get("73", "730")
+  assert(inventory_ok and inventory_value.items.heartneck == 1)
+  local other_ok, other_balance = ledger:balance("74", "730")
+  assert(other_ok and other_balance.wallet == 0, "retail purchase state must remain isolated by guild")
+end)
+
+test("retail cart, wishlist, and favorites persist separately within each guild", function()
+  store.data["77"] = { guild = "77", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  assert(shop:set_enabled("77", true))
+  local ok = shop:update_retail_state("77", "770", "cart", "add", "define6", 2)
+  assert(ok)
+  ok = shop:update_retail_state("77", "770", "wishlist", "add", "heartneck")
+  assert(ok)
+  local duplicate, result = shop:update_retail_state("77", "770", "wishlist", "add", "heartneck")
+  assert(duplicate and result.already_saved)
+  ok = shop:update_retail_state("77", "770", "favorites", "add", "blushhope")
+  assert(ok)
+  local saved, state = shop:retail_user_state("77", "770")
+  assert(saved and state.cart.define6 == 2 and state.wishlist[1] == "heartneck" and state.favorites[1] == "blushhope")
+  assert(shop:set_enabled("78", true))
+  local other_ok, other = shop:retail_user_state("78", "770")
+  assert(other_ok and next(other.cart) == nil and #other.wishlist == 0 and #other.favorites == 0)
+  local removed = shop:update_retail_state("77", "770", "cart", "remove", "define6")
+  assert(removed)
+  saved, state = shop:retail_user_state("77", "770")
+  assert(saved and state.cart.define6 == nil)
 end)
 
 test("mature content needs server opt-in, a verified NSFW channel, and a user opt-in", function()
@@ -153,9 +204,9 @@ test("shop purchases are idempotent and commit wallet, inventory, and Money ID t
   assert(not ok and result == "shop_disabled")
   assert(shop:set_enabled("10", true))
   ok, result = ledger:change("10", "200", "301", "daily")
-  assert(ok and result.wallet == 100)
+  assert(ok and result.wallet == 1500)
   ok, result = shop:buy("10", "200", "302", "pickaxe", 1)
-  assert(ok and result.charged == 100 and result.wallet == 0 and result.item_id == "pickaxe")
+  assert(ok and result.charged == 100 and result.wallet == 1400 and result.item_id == "pickaxe")
   local journal_count = #store.data["10"].journal
   local replay_ok, replay = shop:buy("10", "200", "302", "pickaxe", 1)
   assert(replay_ok and replay.item_id == "pickaxe" and #store.data["10"].journal == journal_count)
@@ -170,13 +221,88 @@ test("shop purchases are idempotent and commit wallet, inventory, and Money ID t
   assert(inv_ok and not value.items.rose_crown and #store.data["10"].journal == journal_count)
 end)
 
+test("rebalanced daily, weekly, and work payouts use bounded central ranges and cooldowns", function()
+  local isolated = memory_guild_store()
+  local timestamp = 1000
+  local reward_ledger = Ledger.new(isolated, function() return timestamp end, function(_, maximum) return maximum end)
+  local ok, result = reward_ledger:change("74", "740", "74001", "daily")
+  assert(ok and result.amount == 3500)
+  local denied, reason = reward_ledger:change("74", "740", "74002", "daily")
+  assert(not denied and reason == "cooldown")
+  timestamp = timestamp + Ledger.rewards.daily.cooldown
+  ok, result = reward_ledger:change("74", "740", "74003", "daily")
+  assert(ok and result.amount == 3500)
+  ok, result = reward_ledger:change("74", "740", "74004", "weekly")
+  assert(ok and result.amount == 12000)
+  ok, result = reward_ledger:change("74", "740", "74005", "work")
+  assert(ok and result.amount == 1800)
+  timestamp = timestamp + Ledger.rewards.work.cooldown - 1
+  denied, reason = reward_ledger:change("74", "740", "74006", "work")
+  assert(not denied and reason == "cooldown")
+  timestamp = timestamp + 1
+  ok, result = reward_ledger:change("74", "740", "74007", "work")
+  assert(ok and result.amount == 1800)
+  assert(Ledger.rewards.daily.minimum == 1500 and Ledger.rewards.daily.maximum == 3500)
+  assert(Ledger.rewards.weekly.minimum == 6000 and Ledger.rewards.weekly.maximum == 12000)
+  assert(Ledger.rewards.work.minimum == 400 and Ledger.rewards.work.maximum == 1800)
+end)
+
+test("daily and weekly streak bonuses continue, reset after missed windows, and stay capped", function()
+  local isolated, timestamp = memory_guild_store(), 2000
+  local reward_ledger = new_ledger(isolated, function() return timestamp end)
+  local daily
+  for day = 0, 9 do
+    if day > 0 then timestamp = timestamp + Ledger.rewards.daily.cooldown end
+    local ok, result = reward_ledger:change("76", "760", tostring(76000 + day), "daily")
+    assert(ok)
+    daily = result
+    if day == 4 then assert(result.streak == 5 and result.streak_bonus == 250 and result.amount == 1750) end
+    if day == 9 then assert(result.streak == 10 and result.streak_bonus == 500 and result.amount == 2000) end
+  end
+  timestamp = timestamp + Ledger.rewards.daily.streak_window + 1
+  local ok, result = reward_ledger:change("76", "760", "76020", "daily")
+  assert(ok and result.streak == 1 and result.streak_bonus == 0)
+  for week = 0, 3 do
+    timestamp = timestamp + (week == 0 and 0 or Ledger.rewards.weekly.cooldown)
+    ok, result = reward_ledger:change("76", "761", tostring(76100 + week), "weekly")
+    assert(ok)
+    if week == 3 then assert(result.streak == 4 and result.streak_bonus == 1500 and result.amount == 7500) end
+  end
+end)
+
+test("a claim at Unix epoch zero still activates its cooldown", function()
+  local isolated = memory_guild_store()
+  local reward_ledger = new_ledger(isolated, function() return 0 end)
+  local ok = reward_ledger:change("79", "790", "79001", "daily")
+  assert(ok)
+  local duplicate, reason = reward_ledger:change("79", "790", "79002", "daily")
+  assert(not duplicate and reason == "cooldown")
+end)
+
+test("retail variants can be equipped in separate clothing and jewelry slots", function()
+  local data = { guild = "75", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
+  assert(InventoryData.add(data, "750", "define6", 1))
+  assert(InventoryData.add(data, "750", "heartneck", 1))
+  assert(InventoryData.add(data, "750", "bracelet16", 1))
+  store.data["75"] = data
+  local ok, result = fashion:equip("75", "750", "define6")
+  assert(ok and result.slot == "outfit")
+  ok, result = fashion:equip("75", "750", "heartneck")
+  assert(ok and result.slot == "necklace")
+  ok, result = fashion:equip("75", "750", "bracelet16")
+  assert(ok and result.slot == "bracelet")
+  local found, value = inventory:get("75", "750")
+  assert(found and value.equipped.outfit == "define6" and value.equipped.necklace == "heartneck"
+    and value.equipped.bracelet == "bracelet16")
+end)
+
 test("ledger replays compare complete operation fingerprints before changing balances or inventory", function()
   local isolated = memory_guild_store()
   isolated.data["30"] = { guild = "30", accounts = {
     ["20"] = { wallet = 1000, bank = 0 }, ["21"] = { wallet = 0, bank = 0 }, ["99"] = { wallet = 0, bank = 0 },
   }, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
     molly_v2 = { schema_version = 1, inventory = { items = { ["20"] = { copper_ore = 3 } }, equipped = {} } } }
-  local service = Ledger.new(isolated, function() return 100000 end)
+  local service = new_ledger(isolated, function() return 100000 end)
   local ok, result = service:change("30", "20", "901", "pay", "5", "21")
   assert(ok and result.amount == 5 and result.wallet == 995)
   local journal_count = #isolated.data["30"].journal
@@ -257,7 +383,7 @@ test("journal rotation permits new writes after 1,000 records and survives reloa
   end
   local clock, state = 0, persistent_store()
   local first_id, first_money_id, last_id, last_result
-  local service = Ledger.new(state, function() clock = clock + 86400; return clock end)
+  local service = new_ledger(state, function() clock = clock + 86400; return clock end)
   for index = 1, Ledger.max_journal_records do
     local request_id = tostring(3000000000 + index)
     local ok, result = service:change("80", "70", request_id, "daily")
@@ -278,7 +404,7 @@ test("journal rotation permits new writes after 1,000 records and survives reloa
   assert(found and lookup.id == "E" .. last_id)
 
   local reloaded = persistent_store({ ["80"] = clone(state.data["80"]) })
-  local after_restart = Ledger.new(reloaded, function() clock = clock + 86400; return clock end)
+  local after_restart = new_ledger(reloaded, function() clock = clock + 86400; return clock end)
   local journal_count, wallet = #reloaded.data["80"].journal, reloaded.data["80"].accounts["70"].wallet
   local replayed, replay = after_restart:change("80", "70", last_id, "daily")
   assert(replayed and replay.wallet == last_result.wallet)
@@ -300,7 +426,7 @@ test("economy receipts stay bounded and expired request IDs fail closed after re
   local clock, state = 0, persistent_store()
   local first_id, first_money_id, last_id, last_result
   local ok, result
-  local service = Ledger.new(state, function() clock = clock + 86400; return clock end)
+  local service = new_ledger(state, function() clock = clock + 86400; return clock end)
   for index = 1, Ledger.max_economy_receipts + 1 do
     local request_id = tostring(4000000000 + index)
     ok, result = service:change("81", "71", request_id, "daily")
@@ -315,7 +441,7 @@ test("economy receipts stay bounded and expired request IDs fail closed after re
   assert(#data.journal == Ledger.max_journal_records)
 
   local reloaded = persistent_store({ ["81"] = clone(data) })
-  local after_restart = Ledger.new(reloaded, function() clock = clock + 86400; return clock end)
+  local after_restart = new_ledger(reloaded, function() clock = clock + 86400; return clock end)
   local wallet, journal_count = reloaded.data["81"].accounts["71"].wallet, #reloaded.data["81"].journal
   local ok, reason = after_restart:change("81", "71", first_id, "daily")
   assert(not ok and reason == "replay_expired", "a pruned ID must never execute again")
@@ -340,7 +466,7 @@ test("ledger receipt index avoids rescanning its persisted map on every mutation
     return ok, result, changed
   end }
   local now = 0
-  local service = Ledger.new(store, function() now = now + 86400; return now end)
+  local service = new_ledger(store, function() now = now + 86400; return now end)
   for index = 1, 100 do
     local ok = service:change("89", "70", tostring(7000000 + index), "daily")
     assert(ok)
@@ -365,13 +491,13 @@ end)
 test("ledger receipt index invalidates on generation changes and stays bounded across guilds", function()
   local isolated, now = memory_guild_store(), 0
   local clock = function() now = now + 86400; return now end
-  local first = Ledger.new(isolated, clock)
-  local second = Ledger.new(isolated, clock)
+  local first = new_ledger(isolated, clock)
+  local second = new_ledger(isolated, clock)
   assert(first:change("95", "70", "8000000001", "daily"))
   assert(second:change("95", "70", "8000000002", "daily"))
   assert(first:change("95", "70", "8000000003", "daily"))
   local data = isolated.data["95"]
-  assert(data.economy_receipt_count == 3 and data.accounts["70"].wallet == 300,
+  assert(data.economy_receipt_count == 3 and data.accounts["70"].wallet == 4500,
     "a stale local index must rebuild after another Ledger instance commits")
   for index = 1, 12 do
     local guild = tostring(1000 + index)
@@ -383,17 +509,17 @@ end)
 
 test("economy balances and matching request IDs remain isolated across guilds", function()
   local isolated = memory_guild_store()
-  local service = Ledger.new(isolated, function() return 200000 end)
+  local service = new_ledger(isolated, function() return 200000 end)
   local first_ok = service:change("90", "70", "900", "daily")
   local second_ok = service:change("91", "70", "900", "daily")
   assert(first_ok and second_ok, "the same Discord request ID can independently exist in two guild ledgers")
   local replayed, result = service:change("90", "70", "900", "daily")
-  assert(replayed and result.wallet == 100)
+  assert(replayed and result.wallet == 1500)
   local conflict, reason = service:change("91", "70", "900", "deposit", "all")
   assert(not conflict and reason == "replay_conflict")
   local first_balance, a = service:balance("90", "70")
   local second_balance, b = service:balance("91", "70")
-  assert(first_balance and second_balance and a.wallet == 100 and b.wallet == 100)
+  assert(first_balance and second_balance and a.wallet == 1500 and b.wallet == 1500)
   assert(isolated.data["90"].economy_receipts["interaction:900"]
     and isolated.data["91"].economy_receipts["interaction:900"])
   assert(isolated.data["90"] ~= isolated.data["91"])
@@ -404,10 +530,10 @@ test("account creation has no permanent 200-account ceiling", function()
   local accounts = {}
   for index = 1, 200 do accounts[tostring(index)] = { wallet = 0, bank = 0 } end
   isolated.data["82"] = { guild = "82", accounts = accounts, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
-  local service = Ledger.new(isolated, function() return 200000 end)
+  local service = new_ledger(isolated, function() return 200000 end)
   local ok, result = service:change("82", "201", "500000", "daily")
-  assert(ok and result.wallet == 100)
-  assert(isolated.data["82"].accounts["201"].wallet == 100)
+  assert(ok and result.wallet == 1500)
+  assert(isolated.data["82"].accounts["201"].wallet == 1500)
   local count = 0; for _ in pairs(isolated.data["82"].accounts) do count = count + 1 end
   assert(count == 201 and isolated.data["82"].accounts["1"].wallet == 0)
 end)
@@ -420,7 +546,7 @@ test("mining rejects invalid and non-finite clock state", function()
       local ok, result = fn(data)
       return ok, result
     end }
-    local isolated_ledger = Ledger.new(isolated_store, function() return clock_value end)
+    local isolated_ledger = new_ledger(isolated_store, function() return clock_value end)
     return isolated_ledger:mine("10", "202", request_id)
   end
   local ok, reason = attempt(-1, 100, "406")
@@ -435,9 +561,9 @@ end)
 
 test("fashion is guild-isolated, requires ownership, and enforces the selected server mode", function()
   local ok, result = ledger:change("10", "201", "501", "weekly")
-  assert(ok and result.wallet == 500)
+  assert(ok and result.wallet == 6000)
   ok, result = shop:buy("10", "201", "502", "rose_crown", 1)
-  assert(ok and result.wallet == 250)
+  assert(ok and result.wallet == 5750)
   ok, result = fashion:equip("10", "201", "rose_crown")
   assert(ok and result.slot == "head")
   local found, data = fashion:get("10", "201")
@@ -469,7 +595,7 @@ end)
 test("Virtual Sephora lists and selects free looks idempotently without changing coins or other guilds", function()
   assert(modes:set("80", "sephora"))
   local funded, grant = ledger:change("80", "801", "8001", "daily")
-  assert(funded and grant.wallet == 100)
+  assert(funded and grant.wallet == 1500)
   local balance_ok, before = ledger:balance("80", "801")
   assert(balance_ok)
 
@@ -613,7 +739,7 @@ test("V2 command modules register safe guild/user-facing slash definitions", fun
   assert(router.commands.mode.permission == "manage_guild" and router.commands.content.permission == "manage_guild")
   assert(not router.commands.shop.admin and not router.commands["user-settings"].admin)
   local shop_options = router.commands.shop.options
-  local expected_shop_options = { "status", "catalog", "looks", "try", "lookstatus", "clearlook", "buy", "sell", "enable", "disable" }
+  local expected_shop_options = { "status", "catalog", "browse", "search", "item", "cart", "wishlist", "favorites", "looks", "try", "lookstatus", "clearlook", "buy", "sell", "enable", "disable" }
   assert(#shop_options == #expected_shop_options)
   for index, name in ipairs(expected_shop_options) do assert(shop_options[index].name == name) end
   local options = router.commands["user-settings"].options
