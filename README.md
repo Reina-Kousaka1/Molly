@@ -4,13 +4,16 @@
 <p align="center">
   <img src="assets/KiddyyMolly.png" alt="KiddyyMolly profile picture" width="320">
 </p>
-<h1 align="center">KiddyyMolly 🎀</h1>
-<p align="center"><em>Made with love, pink dreams & a little bit of Sephora ♡</em></p>
+<h1 align="center">🎀 KiddyyMolly 💗</h1>
+<p align="center"><strong>♡ Made with love, pink dreams &amp; a little bit of Sephora ♡</strong></p>
 
-[![CI](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml/badge.svg)](https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Lua](https://img.shields.io/badge/Lua-5.1-2C2D72.svg?logo=lua&logoColor=white)](https://www.lua.org/)
-[![Platform](https://img.shields.io/badge/Platform-Raspberry_Pi_ARM64-A22846.svg?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+<p align="center">
+  <a href="https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Reina-Kousaka1/Molly/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI%20Checks&amp;labelColor=FADADD&amp;color=F48FB1"></a>
+  <a href="https://www.gnu.org/licenses/agpl-3.0"><img alt="AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-F8BBD0?style=for-the-badge&amp;labelColor=FCE4EC"></a>
+  <a href="https://www.lua.org/"><img alt="Lua 5.1" src="https://img.shields.io/badge/Lua-5.1-F48FB1?style=for-the-badge&amp;labelColor=FADADD&amp;logo=lua&amp;logoColor=AA4774"></a>
+  <a href="https://www.raspberrypi.com/"><img alt="Raspberry Pi ARM64" src="https://img.shields.io/badge/Raspberry%20Pi-ARM64-F8BBD0?style=for-the-badge&amp;labelColor=FCE4EC&amp;logo=raspberrypi&amp;logoColor=AA4774"></a>
+</p>
+<p align="center"><img alt="Baby pink to hot pink" src="https://img.shields.io/badge/%E2%99%A1-Baby%20Pink%20%E2%80%A2%20Hot%20Pink-F48FB1?style=flat-square&amp;labelColor=FADADD"></p>
 
 HIIII BESTIESSS!! 😭💗 I'm KiddyyMolly, your pink-bow-wearing, Sephora-obsessed Discord girlieee!! But don't get distracted by my lip gloss: I do moderation, staff management, economy, music, and serious server operations too, okayyy?!
 
@@ -18,13 +21,19 @@ My little tech glam squad is Lua/Luvit, SeaWorld DB for persistent guild data, L
 
 > **Glow-up status:** I'm still evolving, bestieee! 💅 These features and contracts describe what's in my repo, but PLEASE check what is actually deployed before assuming a subsystem is live in production. Cute does not mean careless!!
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 💕 My little superpowers, bestiesss!!
 
 ### 🎀 Moderation — no drama allowed, girlieee
 
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
+
 Drama in MY server?! Absolutely nottt 😭 I handle moderation cases and persistent per-guild state. My Discord interaction handlers share centralized response logic and careful command syncing, because double-registering commands is sooo not the vibe.
 
 ### 💸 Economy — earn those shopping coins!!
+
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
 
 Shopping money needs receipts, girlieee! 💸 I keep guild/user economy state persistent and route transactions through my persistence layer — never by sneaking directly into storage files.
 
@@ -34,9 +43,13 @@ Okayyy bestie, here's the important tea ☕🎀 Slash and prefix economy request
 
 ### 💌 Staff besties & management
 
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
+
 My staff besties get their own directory and management tools 💌 Staff data stays per-guild and uses the same persistence boundary, because mixing servers' business would be a disasterrr.
 
 ### 🎧 Music — skincare playlist timeee
+
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
 
 Skincare routine + playlist = perfectionnn 🎧 My music foundation uses Lavalink v4, YouTube-backed search, and Spotify resolution through LavaSrc **when configured**. Registered commands cover playback, track search, bounded queue controls, now-playing status, and persistent music panels. The runtime caps active sessions at 500, upcoming tracks at 50 (25 added per request), and bounds pending callbacks and panel caches; voice-handshake callbacks coalesce to the latest state and saturated Lavalink queues trigger bounded playback recovery.
 
@@ -46,9 +59,13 @@ Okayyy bestie, here's the important tea ☕🎀 The repository contains the Lava
 
 ### 💬 Discord interactions — gotta reply to my besties
 
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
+
 When a bestie talks to me, I ACKNOWLEDGE her!! 💬 My centralized interaction layer handles acknowledgements, edits, follow-ups, and embeds, with sync safeguards to avoid duplicate or conflicting application commands.
 
 ### 💅 My personality & little status updates
+
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
 
 I have my OWN personality and presence, thank yewww 💅 Seasonal outfits and statuses can change without touching moderation, economy, staff, or music behavior.
 
@@ -56,9 +73,13 @@ Molly supports guild-only message commands through the same central router and c
 
 ### 🛍️ Community goodies & permissions
 
+> 🎀 *Baby-pink energy, serious bot business, bestieee!*
+
 The V2 foundation adds guild-isolated modular settings, a central command permission engine, welcome/goodbye messages, event logs, per-guild AFK statuses, safe self-assignable roles, and a reaction starboard. Guild overrides cannot grant developer, protected, or admin access; `MOLLY_DEVELOPER_IDS` remains authoritative. New features default off where they publish messages or change guild roles, and use bounded state. See [docs/v2-community.md](docs/v2-community.md) for community features and [docs/v2-economy-modes.md](docs/v2-economy-modes.md) for inventory, the opt-in shop, mining, fashion, virtual Sephora mode, mature-content policy and optional user preferences.
 
 Okayyy bestie, here's the important tea ☕🎀 Automatic welcome/goodbye delivery and member-count tracking require the privileged `GUILD_MEMBERS` Gateway Intent. It remains opt-in (`MOLLY_GUILD_MEMBERS_INTENT=false` by default) and must also be enabled in the Discord Developer Portal. Prefix commands separately require the Message Content intent.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🧠 How my pretty little brain works
 
@@ -94,6 +115,8 @@ Girl, I **never** open SeaWorld storage files directly. Persistence goes through
 
 Okayyy bestie, here's the important tea ☕🎀 Request IDs help me match things up, but PLEASE don't call that a universal exactly-once guarantee unless the operation explicitly promises one. Receipts matterrr.
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🗂️ What's in my pink little closet
 
 ```text
@@ -109,11 +132,15 @@ Okayyy bestie, here's the important tea ☕🎀 Request IDs help me match things
 └── LICENSE              # AGPL-3.0
 ```
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🖥️ Where I actually liveee
 
 Okayyy bestie, here's the important tea ☕🎀 Under the pink hoodie, I'm built with **Lua 5.1 / LuaJIT and Luvit**. The deployment image targets **Linux ARM64**, matching the Raspberry Pi environment used for Molly.
 
 The project has historically used Luvit 2.18.1 and `discord.lua` for Discord Gateway/application-command functionality.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🔐 My secret skincare cabinet (configuration)
 
@@ -135,6 +162,8 @@ Production credentials stay outside Git with restrictive file permissions. No ex
 
 NEVER put Discord tokens, Spotify credentials, Lavalink passwords, database material, or production `.env` contents in commits, images, fixtures, or logs. GIRL BE FR 😭🔒
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🌊 SeaWorld DB keeps my stuff organized
 
 My SeaWorld persistence journey is VERY intentional, bestie:
@@ -152,11 +181,15 @@ My connector negotiates the supported API contract and fails closed when transpo
 
 Testing with the real service? Use an isolated disposable test database. Production data is NOT your test makeup palette!!
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🎶 Lavalink, my music bestie
 
 Okayyy bestie, here's the important tea ☕🎀 Molly's Lavalink v4 operational files live under `ops/`. The current stack is designed to keep Lavalink local to Molly's runtime environment and keep credentials outside the repository.
 
 Okayyy bestie, here's the important tea ☕🎀 Before changing music infrastructure, inspect the current Compose/configuration state instead of assuming that a development configuration matches production.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🍓 Raspberry Pi & Docker — my little home
 
@@ -176,9 +209,13 @@ docker compose -f ops/molly-container.yml config --quiet
 
 Do NOT run two KiddyyMolly instances with the same Discord token. Two queens, one token? Disasterrr. In particular, a legacy/systemd instance and a Docker instance must not run simultaneously.
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🧪 Testing — green checks or no shopping!!
 
 Need the full testing tea? [`docs/testing.md`](docs/testing.md) has the exact classification and commands. The CI-safe Lua 5.1 suites and `tests/embeds.lua`, plus the standalone Python configuration test, run without Discord, Lavalink, or SeaWorld services. `tests/run_luvit.sh` runs the two Luvit/dependency-based suites. SeaWorld integration checks are separate and require an explicitly confirmed disposable test service; never point them at production.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 💚 CI — my automated quality check
 
@@ -187,6 +224,8 @@ GitHub Actions is my automated bestie, checking pushes and PRs targeting `main`.
 CI intentionally does not require Molly's production Discord token, Lavalink password, Spotify credentials, or SeaWorld access. The Luvit and SeaWorld integration suites are documented separately and are not reported as CI-verified.
 
 A green CI run verifies the repository test contract; it does not by itself prove that a particular Raspberry Pi deployment is running the same commit or configuration.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🛡️ My non-negotiable bestie rules
 
@@ -199,6 +238,8 @@ My non-negotiables, because reliability is literally self-care:
 - secrets must not be logged;
 - reconnect/startup paths must avoid duplicate command registrations or duplicate background workers;
 - deployments must never accidentally run two bot instances with the same token.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🛠️ Wanna help me glow up?
 
@@ -214,11 +255,15 @@ Before giving me a glow-up, do these things in order, girlie:
 
 Keep feature work separated from infrastructure changes where practical. Changes to SeaWorld, Lavalink, or Raspberry Pi operations should not be made merely because a Molly feature happens to depend on them.
 
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
+
 ## 🚨 Security — GIRL, protect your tokens!!
 
 Found a security issue?! Do NOT post credentials, tokens, private server data, or exploitable production details in a public issue. Protect the girlies!!
 
 My repository is PUBLIC, bestie. Treat every committed file like the entire internet can read it.
+
+<p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 💗 License — open-source princess behavior
 
