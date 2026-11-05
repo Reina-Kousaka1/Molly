@@ -18,23 +18,17 @@ end
 
 function Shop:list(guild)
   if not Store.valid_id(guild) then return false, "invalid_guild" end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
-  if mode.commerce == "try_on" then return true, { mode = mode.id, items = self.sephora:lookbook() } end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end
-  return true, { mode = mode.id, items = Catalog.list() }
+  return true, { mode = "kiddy", items = Catalog.list() }
 end
 
 function Shop:status(guild)
   if not Store.valid_id(guild) then return false, "invalid_guild" end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
-  return true, { mode = mode.id, enabled = mode.commerce == "try_on" or config.enabled,
-    ledger_enabled = config.enabled, virtual = mode.commerce == "try_on" }
+  return true, { mode = "kiddy", enabled = config.enabled, ledger_enabled = config.enabled, virtual = false }
 end
 
 function Shop:set_enabled(guild, enabled)
@@ -48,17 +42,7 @@ end
 
 function Shop:buy(guild, user, request_id, item_id, quantity, request_type)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not Store.valid_id(request_id) then return false, "invalid_argument" end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
   quantity = quantity or 1
-  if mode.commerce == "try_on" then
-    if quantity ~= 1 then return false, "virtual_quantity" end
-    if not self.sephora:is_look(item_id) then return false, "virtual_item" end
-    local selected, result = self.sephora:try_on(guild, user, item_id, request_id)
-    if not selected then return false, result end
-    return true, { mode = "sephora", item_id = result.look_id, quantity = 1, charged = 0, replayed = result.replayed }
-  end
-  if self.sephora:is_look(item_id) then return false, "virtual_mode" end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end
@@ -72,9 +56,6 @@ end
 
 function Shop:sell(guild, user, request_id, item_id, quantity, request_type)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not Store.valid_id(request_id) then return false, "invalid_argument" end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
-  if mode.commerce == "try_on" then return false, "virtual_mode" end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end
