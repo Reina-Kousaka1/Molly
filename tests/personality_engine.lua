@@ -188,9 +188,22 @@ test("dayparting respects an explicit UTC offset and late-night excitement is bo
   local fixed_random = function(low, high) if low == 1 and high == 100 then return 1 end; return low end
   Engine.evolve(state, 1793314800, 0, fixed_random)
   assert(state.values.fomo <= 40 and state.values.social_energy <= 29)
+  local spike_at = state.last_fomo_spike_at
+  Engine.evolve(state, 1793316000, 0, fixed_random)
+  assert(state.last_fomo_spike_at == spike_at)
   local morning = Engine.normalize_state(nil)
   Engine.evolve(morning, 1793314800, -600, function(low) return low end)
   assert(morning.values.social_energy >= 60)
+end)
+
+test("conversation FOMO has a guild-level rolling gain cap", function()
+  local store, now = make_store(), 1300000
+  local engine = make_engine(store, function() return now end)
+  for id = 1, 20 do
+    assert(engine:handle_message(message(id, 500 + id, "lip oil trend " .. id, "10", "20")))
+  end
+  local state = state_of(engine, "10")
+  assert(state.fomo_window_gain == 12 and state.values.fomo <= 42)
 end)
 
 test("personality UTC offset is optional, validated, and configurable", function()
