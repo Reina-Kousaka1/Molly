@@ -45,6 +45,7 @@ local MusicManager = require("src.music.manager")
 local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
+local Personality = require("src.personality.engine")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local SettingsCommands = require("src.commands.settings")
@@ -157,15 +158,26 @@ AdminCommands.register(commands, {
     started_at = function() return app.started_at end }),
   lifecycle = lifecycle, updater = updater, terminate = terminate,
 })
+local personality = Personality.new(store, { logger = logger, send = function(channel, message)
+  local rest = bootstrap and bootstrap.bot and bootstrap.bot.client and bootstrap.bot.client.rest
+  if not rest or type(rest.send_message) ~= "function" then return false end
+  return rest:send_message(channel, { content = message })
+end })
 local function bind_client_events(client)
   assert(client and type(client.on) == "function", "Discord client is required")
   dynamic_voice:set_runtime(client.rest, client, nil)
   client:on("guild_create", function(guild) dynamic_voice:on_guild_create(guild); music_panel:recover(guild.id) end)
+  if bootstrap.bot and type(bootstrap.bot.on_message) == "function" then
+    bootstrap.bot:on_message(function(message)
+      local ok, reason = pcall(personality.observe, personality, message)
+      if not ok then logger:warn("personality_observe_failed", { detail = "handler_error" }) end
+    end)
+  end
   local bound, reason = community_events:bind(client, bootstrap.bot)
   if not bound then logger:warn("community_events_unavailable", { detail = reason or "binding_failed" }) end
 end
 local presence = Presence.new({ logger = logger, schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval,
-  write = function(text) return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
+  write = function(text) personality:set_status(text); return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
 local prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
 SettingsCommands.register(commands, guild_settings, { on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end })
 PermissionCommands.register(commands, permission_engine)
@@ -186,6 +198,7 @@ bootstrap.bot:on("voice_server_update", function(data) music_manager:on_voice_se
 bootstrap.bot:on("ready", function()
   local client, user = bootstrap.bot.client, bootstrap.bot.user
   if not client or not user or not user.id then return end
+  personality.bot_id = user.id
   music_manager:set_discord_client(client, user.id); dynamic_voice:set_runtime(client.rest, client, user.id); music_panel:set_bot(client, music_manager); music_panel:register_interactions(bootstrap.bot, music_manager)
   local started, reason = music_manager:start(user.id); if not started then logger:warn("music_gateway_unavailable", { detail = reason or "not_configured" }) end
   local pending_ok, marker = lifecycle:pending()
