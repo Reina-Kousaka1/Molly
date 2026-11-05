@@ -28,6 +28,7 @@ local MusicManager = require("src.music.manager")
 local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
+local PersonalityEngine = require("src.personality.engine")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local SettingsCommands = require("src.commands.settings")
@@ -101,13 +102,19 @@ local function bind_client_events(client)
 end
 local presence = Presence.new({ logger = logger, schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval,
   write = function(text) return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
+local personality = PersonalityEngine.new({ store = store, logger = logger, presence = presence,
+  timezone_offset_minutes = config.personality.utc_offset_minutes })
 local prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
 SettingsCommands.register(commands, guild_settings, { on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end })
 bootstrap = DiscordBootstrap.new({ discord = discord, intents = gateway_intents, app = app, commands = commands,
-  logger = logger, presence = presence, on_client = bind_client_events }):build()
+  logger = logger, presence = presence, personality = personality, on_client = bind_client_events }):build()
 local prefix_registered, prefix_reason = prefix_commands:register(bootstrap.bot)
 if not prefix_registered then
   logger:warn("prefix_commands_unavailable", { detail = prefix_reason or "event_unavailable" })
+end
+local personality_registered, personality_reason = personality:register(bootstrap.bot)
+if not personality_registered then
+  logger:warn("personality_engine_unavailable", { detail = personality_reason or "message_event_unavailable" })
 end
 bootstrap.bot:on("voice_state_update", function(data) dynamic_voice:on_voice_state(data); music_manager:on_voice_state(data) end)
 bootstrap.bot:on("voice_server_update", function(data) music_manager:on_voice_server(data) end)

@@ -37,6 +37,7 @@ function Config.load(env)
   if sea_world_url and not valid_http_url(sea_world_url) then errors[#errors + 1] = "SEAWORLD_HEALTH_URL" end
   local timeout_ms = positive_integer(read(env, "SEAWORLD_TIMEOUT_MS"), 1000, 100, 30000, errors, "SEAWORLD_TIMEOUT_MS")
   local retry_attempts = positive_integer(read(env, "SEAWORLD_RETRY_ATTEMPTS"), 1, 1, 3, errors, "SEAWORLD_RETRY_ATTEMPTS")
+  local personality_offset = positive_integer(read(env, "MOLLY_PERSONALITY_UTC_OFFSET_MINUTES"), 0, -720, 840, errors, "MOLLY_PERSONALITY_UTC_OFFSET_MINUTES")
   local lavalink_url = trim(read(env, "MOLLY_LAVALINK_URL")); local lavalink_password = trim(read(env, "MOLLY_LAVALINK_PASSWORD")); local music_errors = {}
   if lavalink_url and not valid_http_url(lavalink_url) then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL" end
   if lavalink_url and not lavalink_password then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_PASSWORD" elseif lavalink_password and not lavalink_url then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL" end
@@ -51,6 +52,7 @@ function Config.load(env)
     integrations = { spotify_client_id = trim(read(env, "MOLLY_SPOTIFY_CLIENT_ID")), spotify_client_secret = trim(read(env, "MOLLY_SPOTIFY_CLIENT_SECRET")), youtube_api_key = trim(read(env, "MOLLY_YOUTUBE_API_KEY")) },
     music = { lavalink_url = lavalink_url, lavalink_password = lavalink_password, lavalink_timeout_ms = lavalink_timeout_ms, configuration_errors = music_errors },
     seaworld = { socket = sea_world_socket, health_url = sea_world_url, timeout_ms = timeout_ms, retry_attempts = retry_attempts },
+    personality = { utc_offset_minutes = personality_offset },
     updater = { url = updater_url, token = updater_token },
     build = { version = trim(read(env, "MOLLY_VERSION")) or "1.2", commit = trim(read(env, "MOLLY_COMMIT")) },
   }

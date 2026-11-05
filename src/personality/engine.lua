@@ -58,6 +58,9 @@ local function default_state()
     last_evolved_at = 0,
     last_response_at = 0,
     last_status_joke_at = 0,
+    last_fomo_spike_at = 0,
+    fomo_window_started_at = 0,
+    fomo_window_gain = 0,
     event_ids = {},
   }
 end
@@ -73,9 +76,10 @@ local function normalize_state(raw)
     for topic in pairs(topics) do state.interests[topic] = clamp(raw.interests[topic], 0, 1000) end
   end
   if type(raw.current_topic) == "string" and topics[raw.current_topic] then state.current_topic = raw.current_topic end
-  for _, key in ipairs({ "next_topic_at", "last_evolved_at", "last_response_at", "last_status_joke_at" }) do
+  for _, key in ipairs({ "next_topic_at", "last_evolved_at", "last_response_at", "last_status_joke_at", "last_fomo_spike_at", "fomo_window_started_at" }) do
     state[key] = clamp(raw[key], 0, 4102444800)
   end
+  state.fomo_window_gain = clamp(raw.fomo_window_gain, 0, 12)
   if type(raw.event_ids) == "table" then
     local start = math.max(1, #raw.event_ids - MAX_EVENT_IDS + 1)
     for index = start, #raw.event_ids do
@@ -127,6 +131,15 @@ local function local_hour(timestamp, offset_minutes)
   return tonumber(os.date("!%H", timestamp + offset_minutes * 60)) or 12
 end
 
+local function add_fomo(state, amount, now)
+  if state.fomo_window_started_at == 0 or now - state.fomo_window_started_at >= 900 or now < state.fomo_window_started_at then
+    state.fomo_window_started_at, state.fomo_window_gain = now, 0
+  end
+  local applied = math.min(amount, math.max(0, 12 - state.fomo_window_gain))
+  state.fomo_window_gain = state.fomo_window_gain + applied
+  state.values.fomo = clamp(state.values.fomo + applied, 0, 100)
+end
+
 local function evolve(state, now, offset_minutes, random)
   local values = state.values
   if state.last_evolved_at == 0 then
@@ -135,8 +148,9 @@ local function evolve(state, now, offset_minutes, random)
     elseif hour >= 12 and hour < 18 then values.social_energy, values.obsession, values.mood = 76, 54, 70
     elseif hour >= 18 and hour < 22 then values.social_energy, values.mood = 44, 55
     else values.social_energy, values.mood, values.fomo = 25, 50, 30 end
-    if (hour >= 22 or hour < 3) and safe_random(random, 1, 100) <= 8 then
-      values.fomo = clamp(values.fomo + safe_random(random, 4, 10), 0, 100)
+    if (hour >= 22 or hour < 3) and now - state.last_fomo_spike_at >= 1800 and safe_random(random, 1, 100) <= 8 then
+      add_fomo(state, safe_random(random, 4, 10), now)
+      state.last_fomo_spike_at = now
       values.social_energy = clamp(values.social_energy + safe_random(random, 1, 4), 0, 100)
     end
     state.last_evolved_at = now
@@ -164,8 +178,9 @@ local function evolve(state, now, offset_minutes, random)
     state.next_topic_at = now + safe_random(random, 2400, 4800)
   end
   local hour = local_hour(now, offset_minutes)
-  if (hour >= 22 or hour < 3) and now - state.last_evolved_at < 600 and safe_random(random, 1, 100) <= 8 then
-    values.fomo = clamp(values.fomo + safe_random(random, 4, 10), 0, 100)
+  if (hour >= 22 or hour < 3) and now - state.last_fomo_spike_at >= 1800 and safe_random(random, 1, 100) <= 8 then
+    add_fomo(state, safe_random(random, 4, 10), now)
+    state.last_fomo_spike_at = now
     values.social_energy = clamp(values.social_energy + safe_random(random, 1, 4), 0, 100)
   end
 end
@@ -287,7 +302,7 @@ function Engine:handle_message(message)
     if topic then
       local contribution = room.contributions[message.author.id] or 1
       local fomo_gain = contribution == 1 and (people >= 3 and 4 or people >= 2 and 3 or 2) or contribution == 2 and 1 or 0
-      state.values.fomo = clamp(state.values.fomo + fomo_gain, 0, 100)
+      add_fomo(state, fomo_gain, now)
       state.values.obsession = clamp(state.values.obsession + (topic == state.current_topic and 3 or 1), 0, 100)
       state.values.social_energy = clamp(state.values.social_energy + math.min(5, people + 1), 0, 100)
       state.interests[topic] = clamp((state.interests[topic] or 0) + 1, 0, 1000)

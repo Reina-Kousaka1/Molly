@@ -36,5 +36,8 @@ jobs:
       - name: Run prefix command and economy tests
         run: lua5.1 tests/prefix_commands.lua
 
+      - name: Run personality engine tests
+        run: lua5.1 tests/personality_engine.lua
+
       - name: Check whitespace
         run: git diff --check
