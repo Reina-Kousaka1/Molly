@@ -22,6 +22,7 @@ function Bootstrap.new(options)
     commands = options.commands,
     logger = options.logger,
     presence = options.presence,
+    personality = options.personality,
     on_client = options.on_client,
     spawn = options.spawn or default_spawn,
     events = EventRouter.new(options.logger),
@@ -89,8 +90,14 @@ function Bootstrap:build()
     if self.presence then self.presence:start() end
     self.spawn(function() self.app:on_ready() end)
   end)
-  self.events:on("disconnect", function() self.app:on_disconnect() end)
-  self.events:on("reconnect", function() self.app:on_reconnect() end)
+  self.events:on("disconnect", function()
+    self.app:on_disconnect()
+    if self.personality then self.personality:on_disconnect() end
+  end)
+  self.events:on("reconnect", function()
+    self.app:on_reconnect()
+    if self.personality then self.personality:on_reconnect() end
+  end)
   self.events:on("error", function()
     if self.logger then
       self.logger:error("discord_client_error", { detail = "client_error" })
@@ -140,6 +147,7 @@ function Bootstrap:start(token)
   assert(type(token) == "string" and token ~= "", "discord token is required")
   assert(self.bot, "build must be called before start")
   self.app:start()
+  if self.personality then self.personality:on_start() end
   local ok = pcall(self.bot.run, self.bot, token)
   if not ok then
     self.app:shutdown("discord_login_failed")

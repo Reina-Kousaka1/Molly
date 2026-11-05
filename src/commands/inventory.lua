@@ -20,7 +20,11 @@ function Commands.register(router, inventory)
         items[#items + 1] = { id = item_id, name = item and item.name or item_id, quantity = quantity }
       end
       table.sort(items, function(a, b) return a.name == b.name and a.id < b.id or a.name < b.name end)
-      for _, item in ipairs(items) do lines[#lines + 1] = string.format("• %s × %d (`%s`)", Util.safe(item.name, 80), item.quantity, Util.safe(item.id, 32)) end
+      for _, item in ipairs(items) do
+        local definition = Catalog.get(item.id) or Catalog.get_resource(item.id)
+        local label = item.name .. (definition and definition.variant and (" (" .. definition.variant .. ")") or "")
+        lines[#lines + 1] = string.format("• %s × %d (`%s`)", Util.safe(label, 100), item.quantity, Util.safe(item.id, 32))
+      end
       if #items == 0 then lines[#lines + 1] = "• Empty" end
       local slots = {}
       for slot, item_id in pairs(value.equipped) do slots[#slots + 1] = { slot = slot, item = item_id } end

@@ -15,6 +15,7 @@ function Rotation.new(options)
     interval_ms = options.interval_ms or Rotation.interval_ms,
     index = 0,
     season_id = nil,
+    current_text = nil,
     handle = nil,
     running = false,
   }, Rotation)
@@ -33,6 +34,7 @@ function Rotation:tick()
   self.index = self.index % #config.presence + 1
   local write_ok, result, reason = pcall(self.write, config.presence[self.index])
   local accepted = write_ok and result ~= false
+  if accepted then self.current_text = config.presence[self.index] end
   if self.logger then
     if accepted then
       self.logger:info("presence_update", { season = config.id, index = self.index })
@@ -44,6 +46,10 @@ function Rotation:tick()
     end
   end
   return accepted
+end
+
+function Rotation:get_current()
+  return self.current_text
 end
 
 function Rotation:start()

@@ -23,7 +23,7 @@ local function validate_items(items)
 end
 
 local function valid_slot(slot)
-  return slot == "head" or slot == "outfit" or slot == "accessory"
+  return Catalog.slot(slot)
 end
 
 local function validate_section(section)
@@ -46,7 +46,7 @@ local function validate_section(section)
         or (owned[item] or 0) < 1 then return false end
       slots = slots + 1
     end
-    if slots > 3 then return false end
+    if slots > 6 then return false end
   end
   return users <= InventoryData.MAX_USERS
 end

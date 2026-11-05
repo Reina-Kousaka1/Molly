@@ -6,7 +6,7 @@ local Money = {}
 function Money.format(settings, amount)
   local value = type(settings) == "table" and settings or GuildSettings.defaults
   if type(amount) ~= "number" or amount ~= amount then return "0 " .. GuildSettings.defaults.currency_name end
-  local rendered = string.format("%.0f", amount)
+  local rendered = string.format("%.0f", amount):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
   local symbol = value.currency_symbol or ""
   local name = value.currency_name or GuildSettings.defaults.currency_name
   return (symbol ~= "" and (symbol .. rendered .. " " .. name)) or (rendered .. " " .. name)

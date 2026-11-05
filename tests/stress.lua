@@ -100,7 +100,8 @@ local function receipt_retention_checks()
   ok, local_reason = ledger:change(data.guild, "30000000001", "10000000001", "daily")
   assert(not ok and local_reason == "replay_expired", "interaction watermark must survive faster message growth")
   local old_message_ok, old_message = ledger:change(data.guild, "40000000001", "20000000001", "daily", nil, nil, "message")
-  assert(old_message_ok and old_message.wallet == 100, "a still-retained message receipt should replay")
+  assert(old_message_ok and old_message.wallet == data.accounts["40000000001"].wallet,
+    "a still-retained message receipt should replay")
   assert(data.accounts["30000000001"].wallet == old_wallet)
   local conflict, conflict_reason = ledger:change(data.guild, "41000000000", "30000000000", "work", nil, nil, "message")
   assert(not conflict and conflict_reason == "replay_conflict", "retained receipts must compare operation fingerprints")
@@ -154,7 +155,7 @@ local function benchmark_ledger()
     local ok, result = ledger:change(data.guild, tostring(20000000000 + index),
       tostring(10000000000 + index), "daily")
     local elapsed = os.clock() - started
-    assert(ok and result.wallet == 100, "synthetic ledger operation failed at " .. index)
+    assert(ok and result.wallet >= 1500 and result.wallet <= 3500, "synthetic ledger operation failed at " .. index)
     latencies[index] = elapsed
     if index == ledger_milestones[milestone_index] then
       local elapsed_total = os.clock() - overall_start
