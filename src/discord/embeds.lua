@@ -1,15 +1,15 @@
 local Embeds = {}
 
 Embeds.colors = {
-  success = 0xA83D91,
-  error = 0xB43B70,
-  warning = 0x85539B,
-  info = 0x653278,
-  moderation = 0x762B83,
-  economy = 0x9A397F,
-  music = 0x8A347F,
-  voice = 0x713A91,
-  system = 0x51466F,
+  success = 0xF48FB1,
+  error = 0xD85A8B,
+  warning = 0xE7A2B5,
+  info = 0xF8BBD0,
+  moderation = 0xEC86AD,
+  economy = 0xF4A6C5,
+  music = 0xF062A6,
+  voice = 0xF6A5CA,
+  system = 0xFADADD,
 }
 
 local category_kind = {
@@ -57,10 +57,10 @@ local function make(kind, title, description, options)
   options = options or {}
   local color = Embeds.colors[kind] or Embeds.colors.info
   local embed = {
-    author = { name = "Molly" },
-    title = truncate(title or "Molly", 256),
+    author = { name = "KiddyyMolly 🎀" },
+    title = truncate(title or "KiddyyMolly", 256),
     color = color,
-    footer = { text = "Molly • A little mystery. 🖤" },
+    footer = { text = "KiddyyMolly • Pink dreams & server safety 💗" },
   }
   if type(description) == "string" and description ~= "" then
     embed.description = truncate(description, 4096, "…")
