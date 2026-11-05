@@ -92,7 +92,7 @@ test("presence failures are contained and a failed scheduler does not leave rota
   assert(not rotation.running)
 end)
 test("ledger validation, atomic transfer, cooldown, replay and rollback", function()
-  local store = memory_store(); local ledger = Ledger.new(store, function() return 100000 end)
+  local store = memory_store(); local ledger = Ledger.new(store, function() return 100000 end, function(minimum) return minimum end)
   local ok, result = ledger:change("1", "2", "100", "daily")
   assert(ok and result.wallet == 1500)
   assert(ledger:change("1", "2", "100", "daily"))
