@@ -416,8 +416,8 @@ test("ledger retry after an unknown commit replays the persisted receipt without
   local ok, reason = ledger:change("10", "101", "2001", "daily")
   assert(not ok and reason == "outcome_unknown")
   local replayed, result = ledger:change("10", "101", "2001", "daily")
-  assert(replayed and result.wallet == 100)
-  assert(base.data["10"].accounts["101"].wallet == 100 and #base.data["10"].journal == 1)
+  assert(replayed and result.wallet == 1500)
+  assert(base.data["10"].accounts["101"].wallet == 1500 and #base.data["10"].journal == 1)
 end)
 
 test("connector sessions fork the connection and keep transaction lifecycle local", function()

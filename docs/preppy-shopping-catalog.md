@@ -83,8 +83,9 @@ this virtual catalog, not current stock at a retailer.
   included in the committed reward and receipt. No existing balance is modified.
 - `tests/economy_simulation.lua` simulates 30 days at midpoint rewards. It models one,
   three, or four work claims a day plus one daily claim and weekly claims on days 1,
-  8, 15, 22, and 29. At that cadence, approximate no-spend totals are 156,000 (casual),
-  222,000 (regular), and 255,000 (very active) coins. First affordability targets
-  vary substantially by cadence; the highly active profile reaches premium items in
-  fewer days than the desired 8–20-day clothing target. This is a model, not observed
-  player data, and reward pacing needs review before treating those targets as met.
+  8, 15, 22, and 29. The executed CI model reported no-spend totals of 169,250 (casual),
+  235,250 (regular), and 268,250 (very active) coins. First affordability in the same
+  run was: B-Hydra 2/1/1 days, blush 1/1/1, heart necklace 4/3/2, bracelet 8/6/5,
+  and Define Jacket 7/4/4 for casual/regular/very-active profiles. This is a deterministic
+  model, not observed player data; frequent work allows highly active profiles to reach
+  premium items sooner than the desired 8–20-day clothing target.
