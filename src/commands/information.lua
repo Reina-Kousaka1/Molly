@@ -94,7 +94,7 @@ function Information.register(router, app)
         groups[category][#groups[category] + 1] = label
       end
     end
-    local lines = {}
+    local lines = { "🎀 KiddyyMolly Help • Your preppy server assistant 💗", "Shop: /shop catalog · /shop buy · /inventory · /fashion equip", "All items are fictional and purchased with in-game coins.", "" }
     for _, category in ipairs(order) do
       if groups[category] then lines[#lines + 1] = category .. ": " .. table.concat(groups[category], ", ") end
     end
