@@ -15,7 +15,8 @@ def row(variant_id="sample1", available="true"):
     values = {
         "catalog_version": "2", "product_id": "sample_product", "id": variant_id,
         "department": "sephora", "brand": "Example Brand", "name": "Example serum",
-        "sku": "ABC-123", "category": "skincare/serum", "description": "Short original summary.",
+        "sku_eu": "-", "sku_us": "-", "product_ref_eu": "P10017094", "product_ref_us": "P97989778",
+        "category": "skincare/serum", "description": "Short original summary.",
         "color": "-", "variant": "30 ml", "kind": "collectible", "slot": "-",
         "eu_cents": "5000", "us_cents": "5500", "fx_usd_per_eur_x10000": "11000",
         "fx_as_of": "2026-11-05",
@@ -29,7 +30,7 @@ def row(variant_id="sample1", available="true"):
 def write(path, rows, version=2):
     path = Path(path)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write(f"# catalog_version={version}\n# schema_version=2\n# test snapshot\n")
+        handle.write(f"# catalog_version={version}\n# schema_version=3\n# test snapshot\n")
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         for value in rows:
             value["catalog_version"] = str(version)
@@ -62,6 +63,10 @@ class RetailCatalogImportTests(unittest.TestCase):
             changed = row(); changed["eu_cents"] = "-1"
             write(path, [changed])
             with self.assertRaisesRegex(CatalogError, "reference price"):
+                read_catalog(path)
+            changed = row(); changed["product_ref_us"] = "-"
+            write(path, [changed])
+            with self.assertRaisesRegex(CatalogError, "both regional product references"):
                 read_catalog(path)
 
     def test_apply_merge_keeps_omitted_records_and_archives_only_complete_snapshot(self):
@@ -111,6 +116,15 @@ class RetailCatalogImportTests(unittest.TestCase):
                 result = main(["apply", "--base", str(base), "--input", str(incoming), "--output", str(output)])
             self.assertEqual(result, 2)
             self.assertFalse(output.exists())
+
+    def test_product_references_must_be_consistent_across_variants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "conflict.tsv"
+            first, second = row("first"), row("second")
+            second["product_ref_us"] = "P97989779"
+            write(path, [first, second])
+            with self.assertRaisesRegex(CatalogError, "conflicting metadata"):
+                read_catalog(path)
 
 
 if __name__ == "__main__":

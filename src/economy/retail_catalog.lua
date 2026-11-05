@@ -2,8 +2,9 @@
 -- Runtime reads stream the file so a large future catalog is never cached in full.
 local Pricing = require("src.economy.retail_pricing")
 
-local Catalog = { VERSION = 2, SCHEMA_VERSION = 2, PAGE_SIZE = 10, MAX_PAGE_SIZE = 10, MAX_VARIANTS_PER_PRODUCT = 500 }
-local fields = { "catalog_version", "product_id", "id", "department", "brand", "name", "sku", "category",
+local Catalog = { VERSION = 3, SCHEMA_VERSION = 3, PAGE_SIZE = 10, MAX_PAGE_SIZE = 10, MAX_VARIANTS_PER_PRODUCT = 500 }
+local fields = { "catalog_version", "product_id", "id", "department", "brand", "name", "sku_eu", "sku_us",
+  "product_ref_eu", "product_ref_us", "category",
   "description", "color", "variant", "kind", "slot", "eu_cents", "us_cents", "fx_usd_per_eur_x10000",
   "fx_as_of", "fx_source", "checked_at", "source_eu", "source_us", "price_note", "available" }
 local function root_path()
@@ -46,6 +47,11 @@ local function split(line)
   return result
 end
 
+local function valid_reference(value, optional)
+  if optional and value == "-" then return true end
+  return type(value) == "string" and #value > 0 and #value <= 100 and value:match("^[%w_%-]+$") ~= nil
+end
+
 local function read_row(line)
   if Catalog.INVALID_SCHEMA then return nil, "catalog_schema_unsupported" end
   local values = split(line)
@@ -58,6 +64,8 @@ local function read_row(line)
     or #row.id > 32 or not row.product_id:match("^[%w_%-]+$") or #row.product_id > 64
     or (row.department ~= "sephora" and row.department ~= "lululemon" and row.department ~= "pandora")
     or row.brand == "" or row.name == "" or row.category == "" or row.variant == ""
+    or not valid_reference(row.product_ref_eu, false) or not valid_reference(row.product_ref_us, false)
+    or not valid_reference(row.sku_eu, true) or not valid_reference(row.sku_us, true)
     or (row.kind ~= "fashion" and row.kind ~= "collectible")
     or (row.slot ~= "-" and row.slot ~= "outfit" and row.slot ~= "head" and row.slot ~= "accessory"
       and row.slot ~= "ring" and row.slot ~= "necklace" and row.slot ~= "bracelet")
@@ -66,6 +74,7 @@ local function read_row(line)
   local price, snapshot = Pricing.snapshot(row.eu_cents, row.us_cents, rate, row.checked_at)
   if not price then return nil, "catalog_invalid" end
   row.price, row.price_snapshot = price, snapshot
+  row.sku = row.sku_us ~= "-" and row.sku_us or (row.sku_eu ~= "-" and row.sku_eu or nil)
   row.available = row.available == "true"
   if row.color == "-" then row.color = nil end
   if row.slot == "-" then row.slot = nil end
@@ -96,13 +105,15 @@ local function each_product(callback)
         end
         current_id, current = row.product_id, {
           id = row.product_id, department = row.department, brand = row.brand, name = row.name, sku = row.sku,
+          product_ref_eu = row.product_ref_eu, product_ref_us = row.product_ref_us,
           category = row.category, description = row.description, color = row.color,
           kind = row.kind, slot = row.slot,
           source_eu = row.source_eu, source_us = row.source_us, price_note = row.price_note,
           catalog_version = row.catalog_version, variants = {},
         }
       elseif current.brand ~= row.brand or current.name ~= row.name or current.department ~= row.department
-        or current.category ~= row.category then file:close(); return false, "catalog_product_conflict" end
+        or current.category ~= row.category or current.product_ref_eu ~= row.product_ref_eu
+        or current.product_ref_us ~= row.product_ref_us then file:close(); return false, "catalog_product_conflict" end
       if #current.variants >= Catalog.MAX_VARIANTS_PER_PRODUCT then file:close(); return false, "catalog_product_capacity" end
       current.variants[#current.variants + 1] = row
     end

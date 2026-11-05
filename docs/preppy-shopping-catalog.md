@@ -7,12 +7,14 @@ retailer descriptions are copied into the bot.
 
 ## Snapshot rules
 
-- TSV schema version: `2`; catalog snapshot version is stored in the first line of
+- TSV schema version: `3`; catalog snapshot version is stored in the first line of
   `data/retail/catalog.tsv`. Product IDs and variant IDs remain stable; inventory owns
-  variant IDs. Each row is a versioned variant with product metadata, reference-price
-  snapshots, source URLs, and availability status.
+  variant IDs. Each row is a versioned variant with regional product references,
+  optional region-specific SKUs, product metadata, reference-price snapshots, source
+  URLs, and availability status. A product reference is not presented as a SKU.
 - Price snapshot checked: `2026-11-05`.
-- FX: ECB reference rate `1 EUR = 1.1221 USD`, stored as `11221 / 10000`.
+- FX: ECB reference rate for 2026-11-05: `1 EUR = 1.1224 USD`, stored as
+  `11224 / 10000`.
 - Formula, using integer cents: round half up `((EU cents + USD cents / USD-per-EUR) * 25 / 19)`.
   This is equivalent to the requested average-EUR-price formula and `1 coin = €0.0038`.
 - Prices are reference/list prices, not checkout offers. For the Pandora bracelet the
@@ -27,13 +29,13 @@ retailer descriptions are copied into the bot.
 
 | Department | Product | Variants | EUR / USD reference | Coin price |
 | --- | --- | ---: | ---: | ---: |
-| Sephora | Drunk Elephant B-Hydra Intensive Hydration Serum, 50 ml | 1 | €52 / $56 | 13,409 |
-| Sephora | Rare Beauty Soft Pinch Liquid Blush, 7.5 ml | 6 selected shades | €29 / $25 | 6,747 |
-| lululemon | Define Jacket Nulu, Pink Pearl/Gold/Gold | US 0–14 (even sizes) | €128 / $128 | 31,851 |
-| Pandora | Entwined Heart & Butterfly Pendant Necklace, 394477C01 | 1 | €75 / $98 | 21,361 |
-| Pandora | Elevated Heart Ring, 198421C01 | EU 48, 50, 52, 54, 56, 58, 60 | €69 / $98 | 20,571 |
-| Pandora | Rainbow Tennis Necklace, 394648C01 | 1 | €139 / $190 | 40,570 |
-| Pandora | Moments Heart Closure Snake Chain Bracelet, 582257C00 | 3 verified lengths | €119 / $200 list | 39,111 |
+| Sephora | Drunk Elephant B-Hydra Intensive Hydration Serum, 50 ml | 1 | €52 / $56 | 13,407 |
+| Sephora | Rare Beauty Soft Pinch Liquid Blush, 7.5 ml | 6 selected shades | €29 / $25 | 6,746 |
+| lululemon | Define Jacket Nulu, Pink Pearl/Gold/Gold | US 0–14 (even sizes) | €128 / $128 | 31,847 |
+| Pandora | Entwined Heart & Butterfly Pendant Necklace, 394477C01 | 1 | €75 / $98 | 21,357 |
+| Pandora | Elevated Heart Ring, 198421C01 | EU 48, 50, 52, 54, 56, 58, 60 | €69 / $98 | 20,567 |
+| Pandora | Rainbow Tennis Necklace, 394648C01 | 1 | €139 / $190 | 40,563 |
+| Pandora | Moments Heart Closure Snake Chain Bracelet, 582257C00 | 3 verified lengths | €119 / $200 list | 39,104 |
 
 Totals: 7 products and 27 selectable variants. The six blush shades are Hope, Joy,
 Happy, Grateful, Grace, and Love. The three verified bracelet lengths included are 16, 21,
@@ -47,9 +49,9 @@ this virtual catalog, not current stock at a retailer.
 
 - [Sephora France: B-Hydra 50 ml, €52](https://www.sephora.fr/p/b-hydra-intensive-hydration---serum-P10013690.html)
 - [Sephora US: B-Hydra 50 ml, $56, item 1785856](https://www.sephora.com/product/b-hydra-intensive-hydration-gel-P406712?country_switch=us)
-- [Sephora France: Soft Pinch, €29 and shades](https://www.sephora.fr/p/soft-pinch---liquid-blush-651745.html)
-- [Sephora US: Soft Pinch, $25](https://www.sephora.com/buy/blush-under-30)
-- [lululemon Germany: Define Jacket Nulu, Pink Pearl](https://www.lululemon.de/de-de/p/define-jacke-nulu/159403005.html)
+- [Sephora France: Soft Pinch, €29 and listed shades](https://www.sephora.fr/p/soft-pinch---liquid-blush-P10017094.html)
+- [Sephora US: Soft Pinch, $25](https://www.sephora.com/product/rare-beauty-by-selena-gomez-soft-pinch-liquid-blush-P97989778)
+- [lululemon EU: Define Jacket Nulu, Pink Pearl/Gold/Gold, €128, SKU 158547109](https://www.eu.lululemon.com/en-lu/p/define-jacket-nulu/158547109.html)
 - [lululemon US: Define Jacket Nulu, Pink Pearl, $128 and sizes 0–14](https://shop.lululemon.com/p/define-jacket-nulu/hnsjuvo8dn?color=76033)
 - [Pandora Germany: Entwined Heart & Butterfly, €75, 394477C01](https://de.pandora.net/de/ketten/ketten-mit-anhanger/verschlungenes-herz-und-schmetterling-anhanger-halskette-/394477C01.html)
 - [Pandora US: Entwined Heart & Butterfly, $98](https://us.pandora.net/en/necklaces/pendant-necklaces/entwined-heart-butterfly-pendant-necklace/394477C01.html)
@@ -81,9 +83,17 @@ require a retailer-authorized export, licensed feed, or another explicitly permi
 source. Product, SKU, price, variant, and availability coverage beyond these rows
 has not been verified.
 
+Regional product references are stored separately from optional SKUs. Soft Pinch
+uses Sephora references `P10017094` (France) and `P97989778` (US); its variant rows
+do not claim a shade-specific SKU because the available product pages show a selected
+shade-specific item rather than a verified SKU for every saved variant. B-Hydra
+records references `P10013690` / `P406712` and US item `1785856`. Define Jacket
+records lululemon references `158547109` / `hnsjuvo8dn` and SKU `158547109` in both regions.
+Where no SKU has been verified for a region, the SKU field is `-`.
+
 ## Versioned catalog import
 
-`tools/retail_catalog.py` validates reviewed TSV snapshots, previews diffs, then merges
+`tools/retail_catalog.py` validates reviewed schema-3 TSV snapshots, previews diffs, then merges
 them without deleting old variants. The tool makes no network requests. An import
 file must include its snapshot version on its first line and one row per variant;
 the current schema is described by the column order in the TSV and the `FIELDS` list

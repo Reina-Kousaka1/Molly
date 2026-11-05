@@ -9,7 +9,9 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-FIELDS = ["catalog_version", "product_id", "id", "department", "brand", "name", "sku", "category",
+SCHEMA_VERSION = 3
+FIELDS = ["catalog_version", "product_id", "id", "department", "brand", "name", "sku_eu", "sku_us",
+          "product_ref_eu", "product_ref_us", "category",
           "description", "color", "variant", "kind", "slot", "eu_cents", "us_cents",
           "fx_usd_per_eur_x10000", "fx_as_of", "fx_source", "checked_at", "source_eu", "source_us",
           "price_note", "available"]
@@ -43,8 +45,8 @@ def read_catalog(path):
         match = re.fullmatch(r"# catalog_version=(\d+)", first)
         if not match or int(match.group(1)) < 1:
             raise CatalogError("first line must be # catalog_version=<positive integer>")
-        if second != "# schema_version=2":
-            raise CatalogError("second line must be # schema_version=2")
+        if second != f"# schema_version={SCHEMA_VERSION}":
+            raise CatalogError(f"second line must be # schema_version={SCHEMA_VERSION}")
         version = int(match.group(1))
         for line_number, line in enumerate(handle, 3):
             if not line.strip() or line.startswith("#"):
@@ -57,7 +59,8 @@ def read_catalog(path):
             if row["id"] in seen:
                 raise CatalogError(f"line {line_number}: duplicate variant ID {row['id']}")
             seen.add(row["id"])
-            signature = tuple(row[key] for key in ("department", "brand", "name", "category", "description", "color", "kind", "slot"))
+            signature = tuple(row[key] for key in ("department", "brand", "name", "category", "description", "color", "kind", "slot",
+                                                   "product_ref_eu", "product_ref_us"))
             previous = products.setdefault(row["product_id"], signature)
             if previous != signature:
                 raise CatalogError(f"line {line_number}: conflicting metadata for product {row['product_id']}")
@@ -91,9 +94,14 @@ def validate_row(row, line, version):
     if row["department"] not in RETAIL_DOMAINS:
         raise CatalogError(f"line {line}: unsupported department")
     if any(not row[key] or len(row[key]) > maximum for key, maximum in
-           (("brand", 80), ("name", 160), ("sku", 120), ("category", 80),
+           (("brand", 80), ("name", 160), ("product_ref_eu", 100), ("product_ref_us", 100), ("category", 80),
             ("description", 500), ("variant", 100))):
         raise CatalogError(f"line {line}: missing or overlong product field")
+    for key in ("sku_eu", "sku_us", "product_ref_eu", "product_ref_us"):
+        if row[key] != "-" and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", row[key]):
+            raise CatalogError(f"line {line}: invalid regional SKU/reference")
+    if row["product_ref_eu"] == "-" or row["product_ref_us"] == "-":
+        raise CatalogError(f"line {line}: both regional product references are required")
     if any(any(char in row[key] for char in "\r\n\t\x00\"") for key in FIELDS):
         raise CatalogError(f"line {line}: control character in field")
     if (row["kind"] not in ("fashion", "collectible") or row["slot"] not in
@@ -142,8 +150,8 @@ def write_catalog_atomic(output, version, rows):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(f"# catalog_version={version}\n")
-            handle.write("# schema_version=2\n")
-            handle.write("# Molly retail catalog. TSV schema=2; one immutable variant snapshot per row.\n")
+            handle.write(f"# schema_version={SCHEMA_VERSION}\n")
+            handle.write(f"# Molly retail catalog. TSV schema={SCHEMA_VERSION}; one immutable variant snapshot per row.\n")
             writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
             # Stable sort groups product rows while preserving curated variant order.
             for row in sorted(rows, key=lambda item: item["product_id"]):

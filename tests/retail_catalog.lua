@@ -10,14 +10,14 @@ local function test(name, callback)
   else failed = failed + 1; io.stderr:write("not ok - " .. name .. ": " .. tostring(reason) .. "\n") end
 end
 
-local rate = { usd_per_eur_x10000 = 11221, as_of = "2026-11-05",
+local rate = { usd_per_eur_x10000 = 11224, as_of = "2026-11-05",
   source = "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" }
 
 test("retail price uses integer arithmetic and documented half-up rounding", function()
   local price, snapshot = Pricing.snapshot(5200, 5600, rate, "2026-11-05")
-  assert(price == 13409)
+  assert(price == 13407)
   assert(snapshot.eu_cents == 5200 and snapshot.us_cents == 5600)
-  assert(snapshot.fx_usd_per_eur_x10000 == 11221 and snapshot.coin_price == price)
+  assert(snapshot.fx_usd_per_eur_x10000 == 11224 and snapshot.coin_price == price)
   assert(Pricing.valid_snapshot(snapshot, price))
 end)
 
@@ -30,7 +30,7 @@ test("price calculator rejects missing, negative, malformed and overflowing inpu
 end)
 
 test("catalog is versioned outside Lua and keeps every established product and variant ID", function()
-  assert(Catalog.VERSION == 2 and #Catalog.list() == 7)
+  assert(Catalog.VERSION == 3 and Catalog.SCHEMA_VERSION == 3 and #Catalog.list() == 7)
   local variants, seen = Catalog.variants(), {}
   assert(#variants == 27)
   for _, item in ipairs(variants) do
@@ -65,11 +65,27 @@ end)
 test("Pandora heart ring uses the verified silver product and has size variants", function()
   local product = Catalog.get_product("pandora_elevated_heart_ring")
   assert(product and product.sku == "198421C01" and product.slot == "ring")
+  assert(product.product_ref_eu == "198421C01" and product.product_ref_us == "198421C01")
   assert(#product.variants == 7 and product.variants[1].id == "ring48"
     and product.variants[7].id == "ring60")
   local ring = Catalog.get("ring56")
   assert(ring.price_snapshot.eu_cents == 6900 and ring.price_snapshot.us_cents == 9800)
-  assert(ring.price == 20571 and Pricing.valid_snapshot(ring.price_snapshot, ring.price))
+  assert(ring.price == 20567 and Pricing.valid_snapshot(ring.price_snapshot, ring.price))
+end)
+
+test("Sephora references are regional and never substituted for an unverified SKU", function()
+  local blush = Catalog.get_product("rare_softpinch")
+  assert(blush and blush.product_ref_eu == "P10017094" and blush.product_ref_us == "P97989778")
+  assert(blush.sku == nil)
+  local variant = Catalog.get("blushhappy")
+  assert(variant.sku == nil and variant.sku_eu == "-" and variant.sku_us == "-")
+end)
+
+test("Define Jacket regional source and SKU fields identify the same verified product", function()
+  local jacket = Catalog.get_product("lulu_define")
+  assert(jacket and jacket.sku_eu == "158547109" and jacket.sku_us == "158547109")
+  assert(jacket.product_ref_eu == "158547109" and jacket.product_ref_us == "hnsjuvo8dn")
+  assert(jacket.source_eu:find("eu%.lululemon%.com", 1) ~= nil)
 end)
 
 test("catalog results are defensive copies", function()

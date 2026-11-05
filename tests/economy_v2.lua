@@ -132,7 +132,7 @@ test("retail variant purchase is atomic, idempotent, guild-scoped, and keeps its
   local replay_ok, replay = shop:buy("73", "730", "73001", "heartneck", 1)
   assert(replay_ok and replay.wallet == purchase.wallet and state.accounts["730"].wallet == purchase.wallet)
   local ring_ok, ring_purchase = shop:buy("73", "730", "73002", "ring56", 1)
-  assert(ring_ok and ring_purchase.variant == "EU 56" and ring_purchase.price_each == 20571
+  assert(ring_ok and ring_purchase.variant == "EU 56" and ring_purchase.price_each == 20567
     and ring_purchase.price_snapshot.eu_cents == 6900 and ring_purchase.price_snapshot.us_cents == 9800)
   state = store.data["73"]
   assert(state.molly_v2.inventory.items["730"].ring56 == 1)
