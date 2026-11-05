@@ -5,6 +5,17 @@ local items = {
   { id = "rose_crown", name = "Rose crown", description = "A virtual fashion accessory.", price = 250, kind = "fashion", slot = "head" },
   { id = "silver_cape", name = "Silver cape", description = "A virtual outfit accessory.", price = 350, kind = "fashion", slot = "outfit" },
   { id = "crystal_ring", name = "Crystal ring", description = "A virtual jewelry accessory.", price = 180, kind = "fashion", slot = "accessory" },
+  { id = "lulu_align_leggings", name = "Lululemon-inspired Align leggings", description = "Soft pink virtual yoga leggings. Fictional in-game item; not an official product.", price = 420, kind = "fashion", slot = "outfit" },
+  { id = "lulu_scuba_hoodie", name = "Lululemon-inspired Scuba hoodie", description = "Oversized strawberry-milk hoodie. Fictional in-game item; not an official product.", price = 490, kind = "fashion", slot = "outfit" },
+  { id = "lulu_belt_bag", name = "Lululemon-inspired belt bag", description = "Pastel pink everyday belt bag. Fictional in-game item; not an official product.", price = 290, kind = "fashion", slot = "accessory" },
+  { id = "lulu_define_jacket", name = "Lululemon-inspired Define jacket", description = "Fitted blush workout jacket. Fictional in-game item; not an official product.", price = 520, kind = "fashion", slot = "outfit" },
+  { id = "lulu_headband", name = "Lululemon-inspired headband", description = "Pink workout hairband. Fictional in-game item; not an official product.", price = 160, kind = "fashion", slot = "head" },
+  { id = "pink_stanley", name = "Pink tumbler", description = "Oversized virtual pink tumbler. Fictional in-game item; not an official product.", price = 240, kind = "fashion", slot = "accessory" },
+  { id = "glow_mask", name = "Glow skincare mask", description = "Cute virtual skincare mask. Fictional in-game item; not an official product.", price = 180, kind = "fashion", slot = "accessory" },
+  { id = "bow_clips", name = "Bow hair clips", description = "A pair of baby-pink hair bows. Fictional in-game item; not an official product.", price = 130, kind = "fashion", slot = "head" },
+  { id = "lip_gloss", name = "Strawberry lip gloss", description = "Glossy virtual beauty accessory. Fictional in-game item; not an official product.", price = 110, kind = "fashion", slot = "accessory" },
+  { id = "skincare_bag", name = "Preppy skincare bag", description = "Pastel beauty essentials pouch. Fictional in-game item; not an official product.", price = 260, kind = "fashion", slot = "accessory" },
+  { id = "sephora_tote", name = "Beauty haul tote", description = "Pink virtual shopping tote. Fictional in-game item; not an official product.", price = 230, kind = "fashion", slot = "accessory" },
 }
 
 local resources = {
