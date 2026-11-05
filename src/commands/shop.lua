@@ -33,7 +33,7 @@ function Commands.register(router, shop, settings)
     execute = function(ctx)
       local guild, user = ctx.guild and ctx.guild.id, ctx.author and ctx.author.id
       if not Store.valid_id(guild) or not Store.valid_id(user) then ctx:respond("This command requires a server member.", { ephemeral = true }); return end
-      if not Util.defer(ctx) then return end
+      if not Util.defer(ctx, { public = true }) then return end
       local action = ctx.molly_subcommand
       if action == "status" then
         local ok, value = shop:status(guild)
