@@ -462,7 +462,8 @@ test("fashion is guild-isolated, requires ownership, and enforces the selected s
   local disabled, reason = shop:list("20")
   assert(not disabled and reason == "shop_disabled")
   local unavailable, mode_reason = shop:buy("20", "201", "505", "citrus_satin", 1)
-  assert(not unavailable and mode_reason == "virtual_mode")
+  assert(not unavailable and mode_reason == "shop_disabled",
+    "Standard mode must honor the disabled coin shop before accepting a paid catalog purchase")
 end)
 
 test("Virtual Sephora lists and selects free looks idempotently without changing coins or other guilds", function()
