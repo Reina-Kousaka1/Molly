@@ -19,10 +19,10 @@ local category_kind = {
 }
 
 local titles = {
-  ping = "Pong", health = "Molly Health", about = "About Molly", uptime = "Uptime",
-  botinfo = "Molly · Bot Information", serverinfo = "Server Information", membercount = "Member Count",
+  ping = "Pong", health = "KiddyyMolly Health", about = "About KiddyyMolly", uptime = "Uptime",
+  botinfo = "KiddyyMolly 🎀 · Bot Information", serverinfo = "Server Information", membercount = "Member Count",
   userinfo = "User Information", avatar = "Avatar", channelinfo = "Channel Information",
-  roleinfo = "Role Information", roles = "Your Roles", permissions = "Permissions", help = "Molly Help",
+  roleinfo = "Role Information", roles = "Your Roles", permissions = "Permissions", help = "KiddyyMolly 🎀 Help",
   ["music-panel"] = "Music Controls", voice = "Voice Rooms",
 }
 
