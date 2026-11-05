@@ -53,15 +53,12 @@ test("role hierarchy checks actor and bot, including missing roles", function()
   assert(not Hierarchy.check(ctx, "12"))
   assert(not Hierarchy.check(ctx, "10"))
 end)
-test("season selector uses the defined Berlin Halloween 2026 window", function()
-  local halloween = Seasonal.current(1793314800)
-  assert(halloween.id == "halloween-2026" and halloween.personality == "succubus")
-  assert(#halloween.presence >= 20 and #halloween.presence <= 30)
-  assert(Seasonal.current(1793573999).id == "halloween-2026")
-  local default = Seasonal.current(1793574000)
-  assert(default.id == "default" and default.personality == "default")
-  assert(#default.presence >= 20 and #default.presence <= 30)
-  assert(Seasonal.current(1793314799).id == "default")
+test("KiddyyMolly keeps one preppy identity all year", function()
+  local first = Seasonal.current(1793314800)
+  assert(first.id == "preppy" and first.personality == "preppy")
+  assert(#first.presence == 25)
+  assert(Seasonal.current(1793574000) == first)
+  assert(Seasonal.current(1793314799) == first)
 end)
 test("presence writes immediately, rotates every two minutes, and reconnect adds no timer", function()
   local ticks, schedules, cancelled, callback = {}, 0, 0
@@ -76,17 +73,17 @@ test("presence writes immediately, rotates every two minutes, and reconnect adds
   assert(rotation:stop() and not rotation:stop()); callback()
   assert(#ticks == 3 and cancelled == 1)
 end)
-test("presence switches to default after the season without creating another writer", function()
+test("presence stays preppy across dates without another writer", function()
   local ticks, schedules, callback, now = {}, 0, nil, 1793314800
   local rotation = Presence.new({ write = function(t) ticks[#ticks + 1] = t; return true end,
     clock = function() return now end,
     schedule = function(_, cb) schedules = schedules + 1; callback = cb; return 1 end,
     cancel = function() end })
   rotation:start()
-  local halloween_text = ticks[#ticks]
+  local previous_text = ticks[#ticks]
   now = 1793574000
   callback()
-  assert(ticks[#ticks] ~= halloween_text and rotation.season_id == "default" and schedules == 1)
+  assert(ticks[#ticks] ~= previous_text and rotation.season_id == "preppy" and schedules == 1)
 end)
 test("presence failures are contained and a failed scheduler does not leave rotation running", function()
   local rotation = Presence.new({ write = function() error("private writer detail") end,
