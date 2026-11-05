@@ -83,9 +83,11 @@ end)
 
 test("Define Jacket regional source and SKU fields identify the same verified product", function()
   local jacket = Catalog.get_product("lulu_define")
-  assert(jacket and jacket.sku_eu == "158547109" and jacket.sku_us == "158547109")
+  assert(jacket)
   assert(jacket.product_ref_eu == "158547109" and jacket.product_ref_us == "hnsjuvo8dn")
   assert(jacket.source_eu:find("eu%.lululemon%.com", 1) ~= nil)
+  local variant = Catalog.get("define0")
+  assert(variant.sku_eu == "158547109" and variant.sku_us == "158547109")
 end)
 
 test("catalog results are defensive copies", function()
