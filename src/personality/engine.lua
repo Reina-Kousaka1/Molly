@@ -258,7 +258,7 @@ function Engine:_runtime(guild, now)
     for id, value in pairs(map) do
       count = count + 1
       local stamp = timestamp(value)
-      if stamp < oldest then oldest_id, oldest = id, stamp end
+      if not oldest_id or stamp < oldest then oldest_id, oldest = id, stamp end
     end
     return count, oldest_id
   end
@@ -271,7 +271,7 @@ function Engine:_runtime(guild, now)
   if user_count >= 500 then
     local oldest_user, oldest = nil, now
     for id, stamp in pairs(record.users) do
-      if id:sub(1, 9) ~= "response:" and stamp < oldest then oldest_user, oldest = id, stamp end
+      if id:sub(1, 9) ~= "response:" and (not oldest_user or stamp < oldest) then oldest_user, oldest = id, stamp end
     end
     if oldest_user then record.users[oldest_user] = nil end
   end

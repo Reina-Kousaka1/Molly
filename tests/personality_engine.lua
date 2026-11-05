@@ -243,6 +243,25 @@ test("persistent message-ID ring stays bounded under a burst", function()
   assert(#state_of(engine, "10").event_ids == 128)
 end)
 
+test("ephemeral flood maps stay capped even when timestamps are identical", function()
+  local store, now = make_store(), 1400000
+  local engine = make_engine(store, function() return now end)
+  for id = 1, 60 do
+    local msg = message(id, 1000 + id, "lip oil channel topic " .. id, "10", 2000 + id)
+    assert(engine:handle_message(msg))
+  end
+  local guild = engine.runtime_guilds["10"]
+  local channels = 0
+  for _ in pairs(guild.participants) do channels = channels + 1 end
+  assert(channels <= 50)
+  for id = 1, 305 do
+    engine:handle_message(message(id, 3000 + id, "skincare topic " .. id, 5000 + id, 6000 + id))
+  end
+  local guilds = 0
+  for _ in pairs(engine.runtime_guilds) do guilds = guilds + 1 end
+  assert(guilds <= 300)
+end)
+
 test("presence exposes only the last successfully applied status", function()
   local rotation = Presence.new({ write = function() return true end, schedule = function() return 1 end,
     cancel = function() end, clock = function() return 1793314800 end })
