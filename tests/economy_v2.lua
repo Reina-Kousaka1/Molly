@@ -451,7 +451,7 @@ test("fashion is guild-isolated, requires ownership, and enforces the selected s
   assert(shop_ok and book.mode == "sephora" and #book.items == 4)
   local account_before = store.data["20"] and store.data["20"].accounts["201"]
   local selected, look = shop:buy("20", "201", "503", "rose_glow", 1)
-  assert(selected and look.charged == 0 and look.mode == "sephora")
+  assert(selected and look.charged == 0 and look.mode == "sephora" and look.name == "Rose Glow")
   assert((store.data["20"] and store.data["20"].accounts["201"]) == account_before,
     "virtual Sephora must not touch the coin ledger")
   local fitting_ok, fitting = sephora:get("20", "201")
@@ -463,6 +463,45 @@ test("fashion is guild-isolated, requires ownership, and enforces the selected s
   assert(not disabled and reason == "shop_disabled")
   local unavailable, mode_reason = shop:buy("20", "201", "505", "citrus_satin", 1)
   assert(not unavailable and mode_reason == "virtual_mode")
+end)
+
+test("Virtual Sephora lists and selects free looks idempotently without changing coins or other guilds", function()
+  assert(modes:set("80", "sephora"))
+  local funded, grant = ledger:change("80", "801", "8001", "daily")
+  assert(funded and grant.wallet == 100)
+  local balance_ok, before = ledger:balance("80", "801")
+  assert(balance_ok)
+
+  local listed, catalog = shop:list("80")
+  assert(listed and catalog.mode == "sephora" and #catalog.items == 4)
+  for _, item in ipairs(catalog.items) do assert(item.price == nil, "virtual looks must be listed as free") end
+  local status_ok, status = shop:status("80")
+  assert(status_ok and status.mode == "sephora" and status.enabled and not status.ledger_enabled)
+
+  local bought, result = shop:buy("80", "801", "8002", "rose_glow", 1)
+  assert(bought and result.mode == "sephora" and result.charged == 0 and result.look_id == "rose_glow")
+  local replay, replay_result = shop:buy("80", "801", "8002", "rose_glow", 1)
+  assert(replay and replay_result.replayed, "same virtual purchase request must replay without a second mutation")
+  local conflict, conflict_reason = shop:buy("80", "801", "8002", "citrus_satin", 1)
+  assert(not conflict and conflict_reason == "replay_conflict")
+  local invalid_quantity, quantity_reason = shop:buy("80", "801", "8003", "citrus_satin", 2)
+  assert(not invalid_quantity and quantity_reason == "virtual_quantity")
+  local invalid_item, item_reason = shop:buy("80", "801", "8004", "pickaxe", 1)
+  assert(not invalid_item and item_reason == "virtual_item")
+  local sold, sell_reason = shop:sell("80", "801", "8005", "copper_ore", 1)
+  assert(not sold and sell_reason == "virtual_mode")
+
+  local after_ok, after = ledger:balance("80", "801")
+  assert(after_ok and after.wallet == before.wallet and after.bank == before.bank,
+    "virtual selection must not change wallet or bank")
+  local other_ok, other = sephora:get("81", "801")
+  assert(other_ok and other == nil, "virtual fittings are guild-scoped")
+  local standard_ok, standard = shop:list("81")
+  assert(not standard_ok and standard == "shop_disabled", "guild mode and shop settings must remain isolated")
+
+  assert(modes:set("80", "standard"))
+  local mode_denied, mode_reason = sephora:select("80", "801", "lilac_moon", "8006")
+  assert(not mode_denied and mode_reason == "virtual_mode", "selection must validate the mode in the write transaction")
 end)
 
 test("Sephora receipts migrate, rotate at 5,000, and remain replay-safe through 10,000 requests", function()

@@ -2,6 +2,7 @@ local Store = require("src.persistence.guild_store")
 local V2 = require("src.persistence.guild_v2")
 local InventoryData = require("src.economy.inventory_data")
 local ReceiptWindow = require("src.persistence.receipt_window")
+local Schema = require("src.settings.schema")
 
 local Sephora = {}
 Sephora.__index = Sephora
@@ -39,13 +40,17 @@ function Sephora:is_look(id)
   return type(id) == "string" and LOOKS[id] ~= nil
 end
 
-function Sephora:try_on(guild, user, look_id, request_id)
+local function select_look(self, guild, user, look_id, request_id, require_ownership)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not self:is_look(look_id)
     or not Store.valid_id(request_id) then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
-    local inventory, inventory_reason = InventoryData.get(data, user)
-    if not inventory then return false, inventory_reason end
-    if (inventory.items[look_id] or 0) < 1 then return false, "not_owned" end
+    if not require_ownership then
+      local settings, settings_reason = V2.read_section(data, "settings")
+      if not settings then return false, settings_reason end
+      local guild_settings, mode_reason = Schema.normalize("guild", settings.guild)
+      if not guild_settings then return false, mode_reason or "invalid_store" end
+      if guild_settings.mode ~= "sephora" then return false, "virtual_mode" end
+    end
     local section, reason = V2.ensure_section(data, "sephora")
     if not section then return false, reason end
     section.fittings = section.fittings or {}
@@ -64,17 +69,36 @@ function Sephora:try_on(guild, user, look_id, request_id)
     elseif receipt_status == "invalid_store" then
       return false, "invalid_store"
     end
+    if require_ownership then
+      local inventory, inventory_reason = InventoryData.get(data, user)
+      if not inventory then return false, inventory_reason end
+      if (inventory.items[look_id] or 0) < 1 then return false, "not_owned" end
+    end
     if section.fittings[user] == nil then
       local count = 0; for _ in pairs(section.fittings) do count = count + 1 end
       if count >= MAX_USERS then return false, "capacity" end
     end
-    section.fittings[user] = { look_id = look_id, timestamp = self.clock() }
+    local timestamp = self.clock()
+    if type(timestamp) ~= "number" or timestamp ~= timestamp or timestamp < 0 or timestamp > 4102444800 then
+      return false, "invalid_time"
+    end
+    section.fittings[user] = { look_id = look_id, timestamp = timestamp }
     local result = { look_id = look_id, replayed = false }
     local saved, save_reason = ReceiptWindow.add(section, SEPHORA_RECEIPTS, request_id,
       { user = user, look_id = look_id })
     if not saved then return false, save_reason end
     return true, result, true
   end)
+end
+
+function Sephora:try_on(guild, user, look_id, request_id)
+  return select_look(self, guild, user, look_id, request_id, true)
+end
+
+-- Virtual Sephora mode offers free look selection. The fitting and receipt are
+-- committed together without changing coin balances or inventory ownership.
+function Sephora:select(guild, user, look_id, request_id)
+  return select_look(self, guild, user, look_id, request_id, false)
 end
 
 function Sephora:get(guild, user)

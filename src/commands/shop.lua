@@ -11,7 +11,7 @@ end
 
 function Commands.register(router, shop, settings)
   local buy_choices, resource_choices = {}, {}
-  for _, item in ipairs(Catalog.list()) do buy_choices[#buy_choices + 1] = { name = item.name .. " — " .. item.price .. " coins", value = item.id } end
+  for _, item in ipairs(Catalog.list()) do buy_choices[#buy_choices + 1] = { name = item.name, value = item.id } end
   for _, item in ipairs(Catalog.resources()) do resource_choices[#resource_choices + 1] = { name = item.name .. " — sell for " .. item.sell_price .. " coins", value = item.id } end
 
   local look_choices = {}
@@ -45,6 +45,10 @@ function Commands.register(router, shop, settings)
       if action == "status" then
         local ok, value = shop:status(guild)
         if not ok then Util.reply(ctx, "Shop settings are unavailable."); return end
+        if value.mode == "sephora" then
+          Util.reply(ctx, "Virtual Sephora is open: choose a free look with `/shop buy`. Coin purchases and selling are disabled in this mode.")
+          return
+        end
         Util.reply(ctx, "🎀 KiddyyMolly shop: " .. (value.enabled and "open" or "closed") .. ". Earn coins with economy commands, then buy your favorite looks.")
       elseif action == "catalog" then
         local ok, result = shop:list(guild)
@@ -58,23 +62,30 @@ function Commands.register(router, shop, settings)
           local price = item.price and (tostring(item.price) .. " coins") or "free"
           lines[#lines + 1] = string.format("%s (`%s`) — %s: %s", Util.safe(item.name, 80), Util.safe(item.id, 32), price, Util.safe(item.description, 180))
         end
-        for _, item in ipairs(Catalog.resources()) do
-          lines[#lines + 1] = string.format("Sell %s (`%s`) — %d coins each", item.name, item.id, item.sell_price)
+        if result.mode == "sephora" then
+          lines[#lines + 1] = "Choose one free virtual look with `/shop buy`; no coins or inventory items are changed."
+        else
+          for _, item in ipairs(Catalog.resources()) do
+            lines[#lines + 1] = string.format("Sell %s (`%s`) — %d coins each", item.name, item.id, item.sell_price)
+          end
+          lines[#lines + 1] = "A pickaxe is required to mine; resources are sold through `/shop sell`."
         end
-        lines[#lines + 1] = "A pickaxe is required to mine; resources are sold through `/shop sell`."
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "looks" then
-        local lines = { "🎀 Beauty looks: earn coins, buy with `/shop buy`, then wear with `/shop try`:" }
+        local status_ok, shop_status = shop:status(guild)
+        local free_selection = status_ok and shop_status.mode == "sephora"
+        local lines = { free_selection and "🎀 Virtual Sephora looks: select one for free with `/shop buy`:" or "🎀 Beauty looks: earn coins and buy with `/shop buy`:" }
         for _, look in ipairs(shop:lookbook()) do
           local item = Catalog.get(look.id)
-          lines[#lines + 1] = look.name .. " (`" .. look.id .. "`) — " .. tostring(item and item.price or "?") .. " coins"
+          local price = free_selection and "free in Virtual Sephora" or (tostring(item and item.price or "?") .. " coins in Standard mode")
+          lines[#lines + 1] = look.name .. " (`" .. look.id .. "`) — " .. price
         end
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "try" then
         local look_id = Util.arg(ctx, "look")
         local ok, result = shop.sephora:try_on(guild, user, look_id, ctx.request_id or ctx.interaction_id)
-        if not ok then Util.reply(ctx, result == "not_owned" and "You need to buy this look first using `/shop buy` and coins earned through economy commands." or ("That look could not be selected (" .. Util.safe(result, 40) .. ").")); return end
-        Util.reply(ctx, "🎀 Virtual look selected: " .. Util.safe(result.look_id, 40) .. ". Previously purchased with coins.")
+        if not ok then Util.reply(ctx, result == "not_owned" and "You need to own this look first. In Standard mode, buy it with coins; in Virtual Sephora, use `/shop buy` to select a free look." or ("That look could not be selected (" .. Util.safe(result, 40) .. ").")); return end
+        Util.reply(ctx, "🎀 Virtual look selected: " .. Util.safe(result.look_id, 40) .. ".")
       elseif action == "lookstatus" then
         local ok, result = shop.sephora:get(guild, user)
         if not ok then Util.reply(ctx, "Your virtual look is unavailable."); return end
@@ -100,6 +111,10 @@ function Commands.register(router, shop, settings)
             virtual_quantity = "Virtual Sephora looks are selected one at a time.", invalid_amount = "Choose a quantity from 1 to 99.",
             unavailable = "Economy storage is unavailable.", invalid_store = "Economy storage requires administrator attention." }
           Util.reply(ctx, messages[result] or "The purchase could not be completed.")
+          return
+        end
+        if result.mode == "sephora" then
+          Util.reply(ctx, "Virtual look selected: " .. Util.safe(result.name, 80) .. ". It was free; no coins were charged.")
           return
         end
         Util.reply(ctx, string.format("Purchased %d × %s for %s. Wallet: %s. Money ID: `%s`.", result.quantity,
