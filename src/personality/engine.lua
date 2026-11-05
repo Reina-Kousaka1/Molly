@@ -275,7 +275,15 @@ function Engine:_runtime(guild, now)
     end
     if oldest_user then record.users[oldest_user] = nil end
   end
-  local guild_count, oldest_guild = evict_oldest(self.runtime_guilds, function(item) return item.last_seen or 0 end)
+  local guild_count = 0
+  local oldest_guild, oldest_guild_seen
+  for id, item in pairs(self.runtime_guilds) do
+    guild_count = guild_count + 1
+    local seen = item.last_seen or 0
+    if id ~= guild and (oldest_guild == nil or seen < oldest_guild_seen) then
+      oldest_guild, oldest_guild_seen = id, seen
+    end
+  end
   if guild_count > MAX_RUNTIME_GUILDS and oldest_guild then self.runtime_guilds[oldest_guild] = nil end
   record.last_seen = now
   return record
@@ -386,7 +394,7 @@ function Engine:handle_message(message)
     elseif self.reply then send_ok, accepted = pcall(self.reply, message, result.reply)
     elseif type(message.reply) == "function" then send_ok, accepted = pcall(message.reply, message, result.reply)
     else send_ok, accepted = false, false end
-    if not send_ok or accepted == false then return false, "send_failed" end
+    if not send_ok or accepted == false or accepted == nil then return false, "send_failed" end
     runtime.channels[channel] = now
     runtime.users["response:" .. message.author.id] = now
   end

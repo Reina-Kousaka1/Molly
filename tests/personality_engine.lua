@@ -106,6 +106,32 @@ test("bots, webhooks, DMs, invalid payloads, and mass mentions are ignored", fun
   assert(store.data["10"] == nil)
 end)
 
+test("irrelevant messages do not open or write guild persistence", function()
+  local store, now = make_store(), 550000
+  local engine = make_engine(store, function() return now end)
+  assert(not engine:handle_message(message(1, 108, "the weather is lovely", "10", "20")))
+  assert(store.commits == 0 and store.data["10"] == nil)
+end)
+
+test("failed Discord sends reserve cooldown and do not retry into a reply loop", function()
+  local store, now, sends = make_store(), 575000, 0
+  local engine = Engine.new({ store = store, clock = function() return now end,
+    random = function(low) return low end,
+    send = function() sends = sends + 1; return nil, "missing_send_messages_permission" end })
+  now = now + 2000
+  local first = message(1, 108, "new lip oil", "10", "20")
+  local ok, reason = engine:handle_message(first)
+  assert(not ok and reason == "send_failed" and sends == 1)
+  now = now + 10
+  local second = message(2, 109, "new skincare serum", "10", "20")
+  assert(engine:handle_message(second) and sends == 1)
+  local state = state_of(engine, "10")
+  assert(state.last_response_at > 0, "a denied send must keep the persisted guild cooldown")
+  local bot_message = message(3, 999, "new lip oil", "10", "20")
+  bot_message.author.bot = true
+  assert(not engine:handle_message(bot_message) and sends == 1)
+end)
+
 test("status self-praise is user-triggered, bounded, and needs active presence", function()
   local store, now = make_store(), 600000
   local engine = make_engine(store, function() return now end)
@@ -260,6 +286,20 @@ test("ephemeral flood maps stay capped even when timestamps are identical", func
   local guilds = 0
   for _ in pairs(engine.runtime_guilds) do guilds = guilds + 1 end
   assert(guilds <= 300)
+end)
+
+test("runtime guild eviction preserves the guild currently handling an event", function()
+  local store, now = make_store(), 1450000
+  local engine = make_engine(store, function() return now end)
+  for id = 1, 300 do
+    engine.runtime_guilds[tostring(6000 + id)] = { last_seen = now, channels = {}, users = {},
+      fingerprints = {}, participants = {} }
+  end
+  engine:_runtime("999999", now)
+  assert(engine.runtime_guilds["999999"], "the active guild must not be evicted on a timestamp tie")
+  local count = 0
+  for _ in pairs(engine.runtime_guilds) do count = count + 1 end
+  assert(count == 300)
 end)
 
 test("presence exposes only the last successfully applied status", function()

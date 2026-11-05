@@ -469,6 +469,7 @@ test("Sephora receipts migrate, rotate at 5,000, and remain replay-safe through 
   local function sephora_data(guild)
     return { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
       molly_v2 = { schema_version = 1, settings = { guild = { mode = "sephora" } },
+        inventory = { items = { ["7"] = { rose_glow = 1 } }, equipped = {} },
         sephora = { fittings = {}, receipts = {} } } }
   end
   local state = { data = { ["92"] = sephora_data("92") } }
@@ -572,7 +573,9 @@ test("V2 command modules register safe guild/user-facing slash definitions", fun
   assert(router.commands.mode.permission == "manage_guild" and router.commands.content.permission == "manage_guild")
   assert(not router.commands.shop.admin and not router.commands["user-settings"].admin)
   local shop_options = router.commands.shop.options
-  assert(#shop_options == 6 and shop_options[1].name == "status" and shop_options[6].name == "disable")
+  local expected_shop_options = { "status", "catalog", "looks", "try", "lookstatus", "clearlook", "buy", "sell", "enable", "disable" }
+  assert(#shop_options == #expected_shop_options)
+  for index, name in ipairs(expected_shop_options) do assert(shop_options[index].name == name) end
   local options = router.commands["user-settings"].options
   assert(#options == 6 and options[1].name == "show")
 end)

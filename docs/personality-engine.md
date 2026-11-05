@@ -23,3 +23,9 @@ The personality listener uses the same `on_message` API already used by Molly's 
 Presence rotation's writer updates the engine's local status only after Discord accepts the presence update. A user question may trigger one of several status jokes; status self-praise is cooldown-limited and updates ego/self-esteem only when the response is selected. Bot-originated messages are ignored, preventing a self-talk loop. Reconnects do not register another event callback.
 
 The implementation deliberately does not introduce an hourly background guild scan, an external LLM, message-history storage, or a new SeaWorld API. Guild state is updated on relevant conversation events. SeaWorld database outage behavior and concurrent session correctness continue to depend on the currently deployed SeaWorld implementation and should be covered by the existing integration environment.
+
+## Extension points and limits
+
+Personality values and topic state are isolated behind `Engine:_mutate` and the `molly_v2.personality` section. Future traits such as spoiledness, impatience, and persistent favorite products should be added as validated, bounded fields in this section, with behavior kept separate from economy balances and shop pricing. Fictional parent interactions, outfit inventory, and live reference pricing belong in separate domain services; they are not implemented by this engine. A future PreppyDB adapter should be introduced only after its real API and consistency guarantees are available, while the current GuildStore remains the persistence boundary.
+
+Timezone handling intentionally remains a fixed UTC offset. The current runtime path does not provide a verified IANA timezone database, so the engine cannot safely apply DST transitions automatically without adding and validating a dependency or runtime capability. A later timezone enhancement should inject a tested local-time conversion function rather than use host-local time implicitly.
