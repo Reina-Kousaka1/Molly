@@ -53,6 +53,9 @@ function Commands.register(router, manager)
           if not success then
             if result == "not_in_session_voice" or result == "different_voice_channel" then return "Join Molly's voice channel to control this session." end
             if result == "no_results" then return "I couldn't find a playable track. Check the query or URL." end
+            if result == "queue_full" then return "The queue is full (50 upcoming tracks maximum). Remove or clear tracks before adding more." end
+            if result == "queue_full_reconnecting" then return "The queue is full, so no new track was added. Molly is reconnecting to continue the existing queue." end
+            if result == "capacity" then return "Molly has reached the current music-session limit." end
             if result == "invalid_query" then return "Enter a search term or a supported audio URL." end
             if result == "lavalink_unavailable" or result == "not_configured" or result == "request_failed" then return "Music is unavailable right now; Lavalink is not connected." end
             if result == "voice_unavailable" then return "I couldn't join that voice channel. Check my Connect and Speak permissions." end
@@ -83,6 +86,9 @@ function Commands.register(router, manager)
     if result.connecting then description = "Connecting to your voice channel; **" .. title .. "** is queued. 🖤"
     elseif result.started then description = Personality.render("music_playing", { title = title })
     else description = Personality.render("music_added", { title = title }) end
+    if result.omitted_count and result.omitted_count > 0 then
+      description = description .. " Only the first " .. tostring(result.count) .. " tracks were added because queue requests are capped."
+    end
     local fields = {}
     add_field(fields, "Artist", info.author, true)
     add_field(fields, "Duration", duration(info.length), true)

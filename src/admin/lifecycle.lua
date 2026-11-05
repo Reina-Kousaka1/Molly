@@ -1,26 +1,80 @@
+local ReceiptWindow = require("src.persistence.receipt_window")
+
 local Lifecycle = {}
 Lifecycle.__index = Lifecycle
 Lifecycle.EXIT_SHUTDOWN = 0
 Lifecycle.EXIT_RESTART = 75
 Lifecycle.EXIT_UPDATE = 76
-local function valid_id(value) return type(value) == "string" and value:match("^%d+$") ~= nil and #value <= 20 end
-function Lifecycle.new(store, options) options = options or {}; return setmetatable({ store = store, clock = options.clock or os.time, version = options.version or "1.2", commit = options.commit }, Lifecycle) end
+
+local MAX_RECEIPTS = 1000
+local RECEIPTS = {
+  map = "receipts", order = "receipt_order", count = "receipt_count",
+  head = "receipt_head", tail = "receipt_tail", watermark = "receipt_watermark",
+  migrated = "receipts_migrated", limit = MAX_RECEIPTS,
+}
+
+local function valid_id(value)
+  return type(value) == "string" and value:match("^%d+$") ~= nil and #value <= 20
+end
+
+function Lifecycle.new(store, options)
+  options = options or {}
+  return setmetatable({ store = store, clock = options.clock or os.time,
+    version = options.version or "1.2", commit = options.commit }, Lifecycle)
+end
+
 function Lifecycle:request(kind, request)
   if kind ~= "restart" and kind ~= "update" then return false, "invalid_action" end
-  if type(request) ~= "table" or not valid_id(request.interaction_id) or not valid_id(request.guild_id) or not valid_id(request.channel_id) or not valid_id(request.requester_id) then return false, "invalid_request" end
+  if type(request) ~= "table" or not valid_id(request.interaction_id) or not valid_id(request.guild_id)
+    or not valid_id(request.channel_id) or not valid_id(request.requester_id) then return false, "invalid_request" end
   return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
-    if type(data.receipts) ~= "table" then return false, "invalid_store" end
-    if data.receipts[request.interaction_id] then return true, data.receipts[request.interaction_id], false end
+    local migrated, prepare_reason = ReceiptWindow.prepare(data, RECEIPTS)
+    if migrated == nil then return false, prepare_reason end
+    local status, receipt = ReceiptWindow.lookup(data, RECEIPTS, request.interaction_id)
+    if status == "retained" then return true, receipt, migrated end
+    if status == "expired" then return false, "replay_expired" end
+    if status == "invalid_store" then return false, "invalid_store" end
     if data.pending then return false, "already_pending" end
-    local marker = { kind = kind, interaction_id = request.interaction_id, guild_id = request.guild_id, channel_id = request.channel_id,
-      requester_id = request.requester_id, reason = request.reason or "", requested_at = self.clock(), version = self.version, commit = self.commit or "" }
-    data.pending = marker; data.receipts[request.interaction_id] = { kind = kind, accepted = true }
+    local marker = { kind = kind, interaction_id = request.interaction_id, guild_id = request.guild_id,
+      channel_id = request.channel_id, requester_id = request.requester_id, reason = request.reason or "",
+      requested_at = self.clock(), version = self.version, commit = self.commit or "" }
+    local saved, save_reason = ReceiptWindow.add(data, RECEIPTS, request.interaction_id,
+      { kind = kind, accepted = true })
+    if not saved then return false, save_reason end
+    data.pending = marker
     return true, marker, true
   end)
 end
-function Lifecycle:pending() return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data) return true, data.pending or false, false end) end
-function Lifecycle:cancel(interaction_id) return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data) if data.pending and data.pending.interaction_id == interaction_id then data.pending = false end; data.receipts[interaction_id] = nil; return true, true, true end) end
-function Lifecycle:complete(interaction_id) return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data) if not data.pending or data.pending.interaction_id ~= interaction_id then return false, "marker_mismatch" end; data.pending = false; return true, true, true end) end
+
+function Lifecycle:pending()
+  return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
+    return true, data.pending or false, false
+  end)
+end
+
+function Lifecycle:cancel(interaction_id)
+  return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
+    local migrated, prepare_reason = ReceiptWindow.prepare(data, RECEIPTS)
+    if migrated == nil then return false, prepare_reason end
+    local changed = migrated
+    if data.pending and data.pending.interaction_id == interaction_id then
+      data.pending = false
+      changed = true
+    end
+    local removed, remove_result = ReceiptWindow.remove(data, RECEIPTS, interaction_id)
+    if not removed then return false, remove_result end
+    return true, true, changed or remove_result
+  end)
+end
+
+function Lifecycle:complete(interaction_id)
+  return self.store:run("lifecycle", { pending = false, receipts = {} }, function(data)
+    if not data.pending or data.pending.interaction_id ~= interaction_id then return false, "marker_mismatch" end
+    data.pending = false
+    return true, true, true
+  end)
+end
+
 function Lifecycle:health_message(marker, health)
   local kind = marker.kind == "update" and "updated" or "restarted"
   local lines = { "🟢 I'm alive & healthy!", "Molly " .. kind .. " successfully." }
@@ -30,4 +84,6 @@ function Lifecycle:health_message(marker, health)
   if marker.requested_at then lines[#lines + 1] = "Downtime: ~" .. math.max(0, self.clock() - marker.requested_at) .. "s" end
   return table.concat(lines, "\n")
 end
+
+Lifecycle.max_receipts = MAX_RECEIPTS
 return Lifecycle

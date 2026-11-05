@@ -5,6 +5,8 @@ local Money = require("src.economy.money_format")
 local messages = { invalid_user = "A valid server user is required.", invalid_target = "Choose another valid user.",
   invalid_amount = "Enter a positive whole amount, all, or max.", insufficient = "Insufficient funds.",
   overflow = "That amount would exceed the balance limit.", cooldown = "That reward is not available yet.",
+  replay_conflict = "This request ID was already used for a different economy action; no new changes were made.",
+  replay_expired = "This request is outside the retained retry window; no new economy action was made.",
   capacity = "The server economy has reached its current capacity.", busy = "Molly is processing another request. Try again shortly.",
   outcome_unknown = "The outcome could not be confirmed. Check your balance and transaction history before retrying.",
   unavailable = "Economy storage is unavailable.", invalid_store = "Economy storage requires administrator attention." }

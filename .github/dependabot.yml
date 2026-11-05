@@ -1,0 +1,48 @@
+version: 2
+updates:
+  # Molly has one workflow action today. This group remains useful as CI grows,
+  # while major action upgrades stay separate for review.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "03:30"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    groups:
+      ci-actions-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # The base runtime image is deliberately reviewed on its own: it affects the
+  # bot container's operating environment and is not coupled to Lavalink.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "03:45"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+
+  # The Lavalink image is a separate music-service boundary and remains an
+  # individual update, rather than being bundled with the bot base image.
+  - package-ecosystem: docker-compose
+    directory: /ops/lavalink
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "04:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3

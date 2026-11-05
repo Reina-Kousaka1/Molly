@@ -20,7 +20,7 @@ local function make_store()
   local store = { data = {}, unavailable = false, commits = 0 }
   function store:run(guild, fn)
     if self.unavailable then return false, "unavailable" end
-    local data = clone(self.data[guild] or { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} })
+    local data = clone(self.data[guild] or { molly_v2 = { schema_version = 1 } })
     local ok, result, changed = fn(data)
     if ok and changed then self.data[guild] = data; self.commits = self.commits + 1 end
     return ok, result
@@ -108,12 +108,11 @@ end)
 
 test("status self-praise is user-triggered, bounded, and needs active presence", function()
   local store, now = make_store(), 600000
-  local presence = { current = nil, get_current = function(self) return self.current end }
-  local engine = make_engine(store, function() return now end, { presence = presence })
+  local engine = make_engine(store, function() return now end)
   assert(engine:handle_message(message(1, 109, "what's up Molly?", "10")))
   local before = state_of(engine, "10").values
   assert(before.ego == 38 and before.self_esteem == 58)
-  presence.current = "Keeping the mod queue moving"
+  engine:set_status("Keeping the mod queue moving")
   now = now + 2000
   local msg = message(2, 110, "what's up Molly?", "10")
   assert(engine:handle_message(msg))
@@ -158,7 +157,7 @@ test("unavailable persistence fails closed without sending spontaneous replies",
   now = now + 2000
   local msg = message(1, 115, "new skincare serum", "10")
   local ok, reason = engine:handle_message(msg)
-  assert(not ok and reason == "persistence_unavailable" and #msg.replies == 0)
+  assert(not ok and reason == "unavailable" and #msg.replies == 0)
 end)
 
 test("recovery resumes after reconnect without duplicate event registration", function()
@@ -174,13 +173,32 @@ end)
 
 test("legacy or malformed persistence recovers with validated bounded values", function()
   local store = make_store()
-  store.data["10"] = { guild = "10", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {},
-    personality = { version = 99, values = { fomo = 900, ego = -8, mood = "oops" }, interests = { makeup = 99999 },
-      current_topic = "unknown", event_ids = { string.rep("x", 300), "42" } } }
+  store.data["10"] = { molly_v2 = { schema_version = 1,
+    personality = { version = 1, fomo = 900, ego = -8, mood = "oops", self_esteem = 70,
+      interests = { makeup = 99999 }, topic = "unknown", event_ids = { string.rep("x", 300), "42" } } } }
   local engine = make_engine(store, function() return 1100000 end)
   local state = state_of(engine, "10")
-  assert(state.version == 1 and state.values.fomo == 100 and state.values.ego == 0 and state.values.self_esteem == 58)
+  assert(state.version == 1 and state.values.fomo == 100 and state.values.ego == 0 and state.values.self_esteem == 70)
   assert(state.interests.makeup == 1000 and state.current_topic ~= "unknown" and #state.event_ids == 1)
+end)
+
+test("flat V1.2 personality fields remain readable", function()
+  local store = make_store()
+  store.data["10"] = { molly_v2 = { schema_version = 1, personality = {
+    fomo = 73, ego = 61, self_esteem = 66, social_energy = 48, topic = "makeup", updated_at = 1500000,
+  } } }
+  local state = state_of(make_engine(store, function() return 1500100 end), "10")
+  assert(state.values.fomo == 73 and state.values.ego == 61 and state.values.self_esteem == 66)
+  assert(state.values.social_energy == 48 and state.current_topic == "makeup" and state.last_evolved_at == 1500000)
+end)
+
+test("unknown future personality schema fails safely without overwriting it", function()
+  local store = make_store()
+  store.data["10"] = { molly_v2 = { schema_version = 1, personality = { version = 2, fomo = 90 } } }
+  local engine = make_engine(store, function() return 1500000 end)
+  local ok, reason = engine:handle_message(message(1, 901, "lip oil is trending", "10", "20"))
+  assert(not ok and reason == "unsupported_schema")
+  assert(store.data["10"].molly_v2.personality.version == 2 and store.data["10"].molly_v2.personality.fomo == 90)
 end)
 
 test("dayparting respects an explicit UTC offset and late-night excitement is bounded", function()

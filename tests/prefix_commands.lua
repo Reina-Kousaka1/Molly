@@ -133,7 +133,8 @@ test("message and interaction identities remain namespaced and replay-safe", fun
   assert(env.prefix:dispatch(msg) and env.prefix:dispatch(msg))
   local data = env.store.data["10"]
   assert(data.accounts["20"].wallet == 80 and data.accounts["20"].bank == 20 and #data.journal == 3)
-  assert(data.receipts["5000"].id == "E5000" and data.receipts["message:5000"].id == "EP5000")
+  assert(data.economy_receipts["interaction:5000"].result.id == "E5000"
+    and data.economy_receipts["message:5000"].result.id == "EP5000")
   local slash_found, slash_record = env.ledger:transaction("10", "E5000")
   local prefix_found, prefix_record = env.ledger:transaction("10", "Mp-3uw")
   assert(slash_found and prefix_found and slash_record.id ~= prefix_record.id and slash_record.money_id ~= prefix_record.money_id)

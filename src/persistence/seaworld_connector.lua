@@ -128,9 +128,12 @@ function Connector:_request(name, payload)
   if not self.driver or type(self.driver.operation) ~= "function" then return false, "capability_unavailable" end
   local ok, success, result = pcall(self.driver.operation, self.driver, name, payload)
   if not ok or not success then
-    if self.in_transaction then self.in_transaction = false end
-    self.current = state("unavailable", "operation_failed")
-    return false, ok and result or "operation_failed"
+    local reason = ok and result or "operation_failed"
+    if self.in_transaction and self.driver.in_transaction ~= true then
+      self.in_transaction = false
+    end
+    self.current = state("unavailable", reason or "operation_failed")
+    return false, reason or "operation_failed"
   end
   return true, result
 end
@@ -159,8 +162,9 @@ function Connector:_finish(name)
   local ok, success, result = pcall(self.driver[name], self.driver)
   self.in_transaction = false
   if not ok or not success then
-    self.current = state("unavailable", "operation_failed")
-    return false, ok and result or "operation_failed"
+    local reason = ok and result or "operation_failed"
+    self.current = state("unavailable", reason or "operation_failed")
+    return false, reason or "operation_failed"
   end
   return true, result
 end
@@ -201,11 +205,14 @@ function Connector:transaction(fn)
   if not started then return false, reason end
   local ok, result, detail = pcall(fn, self)
   if not ok or not result then
-    if self.in_transaction then self:rollback() end
+    if self.in_transaction then
+      local rolled_back = self:rollback()
+      if not rolled_back then return false, "outcome_unknown" end
+    end
     return false, ok and (detail or "transaction_aborted") or "transaction_aborted"
   end
-  local committed, commit_result = self:commit()
-  if not committed then return false, commit_result end
+  local committed = self:commit()
+  if not committed then return false, "outcome_unknown" end
   return true, result
 end
 

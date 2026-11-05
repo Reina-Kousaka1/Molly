@@ -147,6 +147,7 @@ function Bootstrap:start(token)
   assert(type(token) == "string" and token ~= "", "discord token is required")
   assert(self.bot, "build must be called before start")
   self.app:start()
+  if self.personality then self.personality:on_start() end
   local ok = pcall(self.bot.run, self.bot, token)
   if not ok then
     self.app:shutdown("discord_login_failed")

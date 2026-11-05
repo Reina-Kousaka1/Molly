@@ -6,8 +6,9 @@ local function valid_id(value) return type(value) == "string" and value:match("^
 
 function Developer.new(options)
   options = options or {}
-  return setmetatable({ ledger = options.ledger, store = options.store, seaworld = options.seaworld,
-    started_at = options.started_at, max_transactions = options.max_transactions or 20 }, Developer)
+  return setmetatable({ ledger = options.ledger, store = options.store, inventory_service = options.inventory,
+    metrics = options.metrics, seaworld = options.seaworld, started_at = options.started_at,
+    max_transactions = options.max_transactions or 20 }, Developer)
 end
 
 function Developer:balance(guild, user)
@@ -32,8 +33,11 @@ function Developer:transaction(guild, transaction_id)
   return self.ledger:transaction(guild, transaction_id)
 end
 
-function Developer:inventory()
-  return false, "inventory_not_available"
+function Developer:inventory(guild, user)
+  if not self.inventory_service then return false, "inventory_not_available" end
+  local ok, result = self.inventory_service:get(guild, user)
+  if not ok then return false, result end
+  return true, { user = user, item_types = count(result.items), equipped_slots = count(result.equipped) }
 end
 
 function Developer:cooldowns(guild, user)
@@ -55,8 +59,16 @@ function Developer:runtime()
   return true, { lua = _VERSION, uptime = self.started_at and math.max(0, os.time() - self.started_at()) or 0 }
 end
 
+function Developer:observability()
+  if not self.metrics or type(self.metrics.snapshot) ~= "function" then return false, "metrics_unavailable" end
+  local ok, snapshot = pcall(self.metrics.snapshot, self.metrics)
+  if not ok or type(snapshot) ~= "table" then return false, "metrics_unavailable" end
+  return true, snapshot
+end
+
 function Developer:tree()
-  return true, { "app", "commands", "economy", "moderation", "music", "persistence", "seaworld", "staff", "voice" }
+  return true, { "app", "commands", "content", "economy", "inventory", "modes", "moderation",
+    "music", "observability", "persistence", "seaworld", "settings", "staff", "voice" }
 end
 
 function Developer:errors()

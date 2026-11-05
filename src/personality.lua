@@ -4,46 +4,17 @@ local Seasonal = require("src.seasonal")
 -- Keep voice and flavor centralized. Templates carry the concrete values so a
 -- playful variant can never replace the useful result or error information.
 Personality.lines = {
-  generic_success = {
-    "Done. Try not to look too surprised. ✨",
-    "Handled. I do have my moments. 🖤",
-  },
-  generic_error = {
-    "That did not work: {{detail}}",
-    "A small snag: {{detail}}",
-  },
-  permission_denied = {
-    "You do not have permission to do that.",
-    "That one is outside your authority.",
-  },
-  music_added = {
-    "Added **{{title}}** to the queue. Try not to ruin my playlist. 🖤",
-    "**{{title}}** is in the queue. I expect decent taste from here on. 🎧",
-  },
-  music_playing = {
-    "Now playing **{{title}}**. There, the silence is fixed. 🎶",
-    "Starting **{{title}}**. Do keep up. 🖤",
-  },
-  music_idle = { "Nothing is playing. How terribly quiet. 🖤" },
-  voice_created = {
-    "Your room is ready: <#{{channel_id}}> . Make yourself comfortable. ✨",
-    "A little corner of your own: <#{{channel_id}}>. 🖤",
-  },
-  system = { "Molly is here. The details are in the status below." },
-  easter_egg = { "Careful what you try on. Some things fit a little too well. 👠" },
+  generic_success = { "Doneee, bestie! Everything's handled 💗", "All set, girlie! 🎀" },
+  generic_error = { "Omggg, that didn't work: {{detail}} 😭", "Tiny snag, bestie: {{detail}} 💕" },
+  permission_denied = { "Sorry bestie, you don't have permission for that 🔐", "Girl, that action needs different server permissions 🎀" },
+  music_added = { "Added **{{title}}** to the queue, bestie! 🎧💗", "**{{title}}** is queued! Skincare playlist energy 🎀" },
+  music_playing = { "Now playing **{{title}}** — this is a vibe 🎶", "Starting **{{title}}**! Grab your pink Stanley 💕" },
+  music_idle = { "Nothing's playing yet, bestie! Queue up a song 🎧" },
+  voice_created = { "Your cute room is ready: <#{{channel_id}}> 🎀", "Room created: <#{{channel_id}}> — enjoy, girlie 💗" },
+  system = { "KiddyyMolly is here, besties! Check the status below 💕" },
+  easter_egg = { "Sephora wishlist? Girl, it's already full 🛍️🎀" },
 }
-
--- Seasonal overrides keep flavor centralized while leaving command results and
--- operational wording intact. The default profile presents Molly as staff.
-Personality.default_lines = {
-  generic_success = { "Done. The details are in order. ✨", "Handled. The team can keep moving. 🖤" },
-  permission_denied = { "You do not have permission to do that.", "That action is outside your server permissions." },
-  music_added = { "Added **{{title}}** to the queue. Enjoy the selection. 🎧", "**{{title}}** is in the queue. Good choice. 🎶" },
-  music_playing = { "Now playing **{{title}}**. Enjoy the music. 🎶", "Starting **{{title}}**. The room has a soundtrack now. 🎧" },
-  music_idle = { "Nothing is playing right now. Queue up a track when you are ready. 🎧" },
-  voice_created = { "Your room is ready: <#{{channel_id}}>. Make yourself comfortable. ✨", "A room for your group: <#{{channel_id}}>. 🖤" },
-  easter_egg = { "Molly keeps a few mysteries to herself. 🗝️" },
-}
+Personality.default_lines = Personality.lines
 
 local function replace(template, values)
   return (template:gsub("{{([%w_]+)}}", function(key)
@@ -53,9 +24,7 @@ local function replace(template, values)
 end
 
 function Personality.render(category, values, random, timestamp)
-  local season = Seasonal.current(timestamp)
-  local variants = (season.personality == "default" and Personality.default_lines[category])
-    or Personality.lines[category]
+  local variants = Personality.lines[category]
   if not variants or #variants == 0 then return nil end
   local choose = random or math.random
   local index = choose(#variants)
@@ -67,13 +36,8 @@ function Personality.profile(timestamp)
   return Seasonal.current(timestamp).personality
 end
 
-function Personality.about(timestamp)
-  if Personality.profile(timestamp) == "succubus" then
-    return "Molly — self-possessed, sharp-tongued, and rather too confident. It began with an unmarked parcel, " ..
-      "a pair of shoes, and a whisper. The rest is her business. 🖤"
-  end
-  return "Molly — your moderation and staff assistant. Keeping the community organized, the team informed, " ..
-    "and the details in order. With a little style. 🖤"
+function Personality.about(_timestamp)
+  return "Hiiii besties! I'm KiddyyMolly 🎀💗 Your pink, Sephora-loving Discord assistant for moderation, staff, economy, and music. Cute vibes, real server safety!"
 end
 
 return Personality

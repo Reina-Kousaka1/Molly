@@ -1,0 +1,1 @@
+Copy assets/ into the root of Reina-Kousaka1/Molly. Prepend README_HEADER.md to the existing README.md, keeping the existing technical documentation intact. Commit only these branding changes.
