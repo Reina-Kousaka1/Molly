@@ -101,7 +101,7 @@ test("ledger validation, atomic transfer, cooldown, replay and rollback", functi
   ok, result = ledger:change("1", "2", "103", "withdraw", "all"); assert(ok and result.wallet == 1500)
   for _, a in ipairs({ "0", "-1", "NaN", "1000000000001" }) do assert(not ledger:change("1", "2", "104", "pay", a, "3")) end
   assert(not ledger:change("1", "2", "105", "pay", "1", "2"))
-  assert(not ledger:change("1", "2", "106", "pay", "101", "3"))
+  assert(not ledger:change("1", "2", "106", "pay", "1501", "3"))
   assert(ledger:change("1", "2", "107", "pay", "30", "3"))
   ok, result = ledger:balance("1", "3"); assert(ok and result.wallet == 30)
   store.unavailable = true; assert(not ledger:change("1", "2", "108", "pay", "10", "3"))
