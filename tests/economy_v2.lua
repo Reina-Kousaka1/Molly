@@ -115,7 +115,7 @@ test("retail variant purchase is atomic, idempotent, guild-scoped, and keeps its
     cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
   assert(shop:set_enabled("73", true))
   local listed, products = shop:retail_browse("73", "pandora")
-  assert(listed and #products == 4)
+  assert(listed and #products == 5)
   local browse_ok, browse_page, browse_meta = shop:retail_browse("73", nil, { department = "lululemon", brand = "lulu", category = "jacket" }, 1)
   assert(browse_ok and #browse_page == 1 and browse_meta.total == 1 and browse_page[1].id == "lulu_define")
   local search_ok, search_page, search_meta = shop:retail_search("73", "liquid", { department = "sephora", brand = "Rare" }, 1)
