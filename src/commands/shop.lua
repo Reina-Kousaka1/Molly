@@ -16,6 +16,10 @@ function Commands.register(router, shop, settings)
   local look_choices = {}
   for _, look in ipairs(shop:lookbook()) do look_choices[#look_choices + 1] = { name = look.name, value = look.id } end
   local quantity = { type = 4, name = "quantity", description = "Whole item quantity", required = false, min_value = 1, max_value = 99 }
+  local page_option = { type = 4, name = "page", description = "Results page (10 per page)", required = false, min_value = 1, max_value = 1000000 }
+  local function page_note(meta, noun)
+    return string.format("Page %d/%d · %d %s total", meta.page, meta.pages, meta.total, noun)
+  end
   router:register({
     name = "shop", category = "Economy", description = "Browse KiddyyMolly\'s permanent pink economy shop",
     options = {
@@ -26,12 +30,23 @@ function Commands.register(router, shop, settings)
           { name = "Sephora Beauty", value = "sephora" }, { name = "lululemon Fashion", value = "lululemon" },
           { name = "Pandora Jewelry", value = "pandora" },
         } },
+        { type = 3, name = "brand", description = "Optional brand filter", required = false, max_length = 50 },
+        { type = 3, name = "category", description = "Optional category filter", required = false, max_length = 50 },
+        page_option,
       } },
       { type = 1, name = "search", description = "Search the curated retail catalog", options = {
         { type = 3, name = "query", description = "Product, brand or category", required = true, max_length = 80 },
+        { type = 3, name = "department", description = "Optional department", required = false, choices = {
+          { name = "Sephora Beauty", value = "sephora" }, { name = "lululemon Fashion", value = "lululemon" },
+          { name = "Pandora Jewelry", value = "pandora" },
+        } },
+        { type = 3, name = "brand", description = "Optional brand filter", required = false, max_length = 50 },
+        { type = 3, name = "category", description = "Optional category filter", required = false, max_length = 50 },
+        page_option,
       } },
       { type = 1, name = "item", description = "Show a retail product and its purchasable variants", options = {
         { type = 3, name = "product", description = "Stable product ID", required = true, max_length = 32 },
+        page_option,
       } },
       { type = 1, name = "cart", description = "Manage your saved virtual retail cart", options = {
         { type = 3, name = "operation", description = "Show, add, or remove a variant", required = true, choices = {
@@ -102,10 +117,12 @@ function Commands.register(router, shop, settings)
         end
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "browse" then
-        local ok, products = shop:retail_browse(guild, Util.arg(ctx, "department"))
+        local ok, products, meta = shop:retail_browse(guild, Util.arg(ctx, "department"), {
+          brand = Util.arg(ctx, "brand"), category = Util.arg(ctx, "category"),
+        }, Util.arg(ctx, "page"))
         if not ok then Util.reply(ctx, products == "shop_disabled" and "The virtual retail shop is disabled for this server."
           or "The retail catalog is unavailable."); return end
-        local lines = { "🎀 Curated virtual departments (not affiliated with the brands):" }
+        local lines = { "🎀 Curated virtual departments (not affiliated with the brands): " .. page_note(meta, "products") }
         for _, product in ipairs(products) do
           local variant = product.variants[1]
           lines[#lines + 1] = string.format("%s · %s · %s · `%s`", Util.safe(product.brand, 40),
@@ -113,10 +130,12 @@ function Commands.register(router, shop, settings)
         end
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "search" then
-        local ok, products = shop:retail_search(guild, Util.arg(ctx, "query"))
+        local ok, products, meta = shop:retail_search(guild, Util.arg(ctx, "query"), {
+          department = Util.arg(ctx, "department"), brand = Util.arg(ctx, "brand"), category = Util.arg(ctx, "category"),
+        }, Util.arg(ctx, "page"))
         if not ok then Util.reply(ctx, products == "shop_disabled" and "The virtual retail shop is disabled for this server."
           or "Enter a search term of 1–80 characters."); return end
-        local lines = { "Retail search results:" }
+        local lines = { "Retail search results: " .. page_note(meta, "products") }
         for _, product in ipairs(products) do
           local variant = product.variants[1]
           lines[#lines + 1] = string.format("%s · %s · %s · `%s`", Util.safe(product.brand, 40),
@@ -124,16 +143,21 @@ function Commands.register(router, shop, settings)
         end
         Util.reply(ctx, #products > 0 and table.concat(lines, "\n") or "No curated products matched that search.")
       elseif action == "item" then
-        local ok, product = shop:retail_item(guild, Util.arg(ctx, "product"))
+        local ok, product = shop:retail_item(guild, Util.arg(ctx, "product"), Util.arg(ctx, "page"))
         if not ok then Util.reply(ctx, product == "shop_disabled" and "The virtual retail shop is disabled for this server."
           or "That product is not in the curated catalog."); return end
         local lines = { string.format("%s · %s", Util.safe(product.brand, 40), Util.safe(product.name, 80)),
           Util.safe(product.description, 160), "Variants (use a variant ID with `/shop buy`):" }
+        if not product.available then lines[#lines + 1] = "This product is archived and cannot currently be purchased; saved inventory remains valid." end
+        if product.color then lines[#lines + 1] = "Color: " .. Util.safe(product.color, 60) end
         for _, variant in ipairs(product.variants) do
           lines[#lines + 1] = string.format("• %s — %s (`%s`)", Util.safe(variant.variant, 30),
             money(settings, guild, variant.price), Util.safe(variant.id, 32))
         end
-        lines[#lines + 1] = "Reference price checked " .. Util.safe(product.variants[1].price_snapshot.checked_at, 10)
+        if product.variants[1] then
+          lines[#lines + 1] = "Reference price checked " .. Util.safe(product.variants[1].price_snapshot.checked_at, 10)
+        end
+        lines[#lines + 1] = string.format("Variant page %d/%d · %d available variants", product.page, product.pages, product.variant_count)
         Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "cart" or action == "wishlist" or action == "favorites" then
         local operation, item_id = Util.arg(ctx, "operation"), Util.arg(ctx, "item")
@@ -165,6 +189,7 @@ function Commands.register(router, shop, settings)
               or result == "not_saved" and "That variant is not saved in this list."
               or result == "capacity" and "This saved list has reached its limit."
               or result == "invalid_quantity" and "Choose a quantity from 1 to 99."
+              or result == "item_unavailable" and "That archived variant cannot be added; previously saved inventory stays available."
               or "That variant could not be saved. Check its ID with `/shop item`."
             Util.reply(ctx, error_text); return
           end
@@ -208,6 +233,7 @@ function Commands.register(router, shop, settings)
           local messages = { shop_disabled = "The Kiddy coin shop is disabled for this server.",
             insufficient = "You do not have enough coins for that purchase.", capacity = "The shop or economy has reached its storage limit.",
             unknown_item = "That item is not in the server catalog.", virtual_item = "That item is not a virtual Sephora look.",
+            item_unavailable = "That retail variant is archived and cannot be purchased. Existing ownership is unchanged.",
             replay_conflict = "This request ID was already used for a different economy action; no new changes were made.",
             replay_expired = "This request is outside the retained retry window; no new economy action was made.",
             virtual_mode = "That free look is available only while this server uses Virtual Sephora mode.",

@@ -29,8 +29,8 @@ test("price calculator rejects missing, negative, malformed and overflowing inpu
   assert(not Pricing.valid_snapshot({ eu_cents = 100 }, 10))
 end)
 
-test("curated catalog is bounded, versioned, and contains only listed product variants", function()
-  assert(Catalog.VERSION == 1 and #Catalog.list() == 7)
+test("catalog is versioned outside Lua and keeps every established product and variant ID", function()
+  assert(Catalog.VERSION == 2 and #Catalog.list() == 7)
   local variants, seen = Catalog.variants(), {}
   assert(#variants == 27)
   for _, item in ipairs(variants) do
@@ -48,6 +48,18 @@ test("catalog filters departments and searches as literal case-insensitive text"
   assert(#Catalog.search(".") == 0)
   assert(#Catalog.search(string.rep("x", 81)) == 0)
   assert(#Catalog.list("unknown") == 0)
+end)
+
+test("catalog pagination and multi-filter search stay bounded", function()
+  local first = assert(Catalog.page({}, 1, 3))
+  local second = assert(Catalog.page({}, 2, 3))
+  assert(#first.items == 3 and #second.items == 3 and first.total == 7 and first.pages == 3)
+  assert(first.items[1].id ~= second.items[1].id)
+  local found = assert(Catalog.search_page("serum", { department = "sephora", brand = "Drunk", category = "skincare" }, 1, 2))
+  assert(found.total == 1 and #found.items == 1 and found.items[1].id == "de_bhydra")
+  local ring_page = Catalog.get_product("pandora_elevated_heart_ring", 2, 2)
+  assert(ring_page and ring_page.variant_count == 7 and #ring_page.variants == 2)
+  assert(ring_page.variants[1].id == "ring52" and ring_page.page == 2 and ring_page.pages == 4)
 end)
 
 test("Pandora heart ring uses the verified silver product and has size variants", function()

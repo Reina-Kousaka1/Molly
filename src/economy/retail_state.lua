@@ -66,8 +66,10 @@ function RetailState:get(guild, user)
 end
 
 function RetailState:update(guild, user, collection, action, item_id, quantity)
+  local item = Catalog.get(item_id)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not collections[collection]
-    or (action ~= "add" and action ~= "remove") or not Catalog.get(item_id) then return false, "invalid_argument" end
+    or (action ~= "add" and action ~= "remove") or not item then return false, "invalid_argument" end
+  if action == "add" and item.product_id and not item.available then return false, "item_unavailable" end
   if collection == "cart" then
     quantity = quantity or 1
     if type(quantity) ~= "number" or quantity % 1 ~= 0 or quantity < 1 or quantity > RetailState.MAX_QUANTITY then

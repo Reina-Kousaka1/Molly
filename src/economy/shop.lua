@@ -26,7 +26,7 @@ function Shop:lookbook()
   return self.sephora:lookbook()
 end
 
-function Shop:retail_browse(guild, department)
+function Shop:_check_retail(guild)
   if not Store.valid_id(guild) then return false, "invalid_guild" end
   local mode_ok, mode = self.modes:get(guild)
   if not mode_ok then return false, mode end
@@ -34,35 +34,52 @@ function Shop:retail_browse(guild, department)
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end
+  return true
+end
+
+function Shop:retail_browse(guild, department, filters, page)
+  local allowed, reason = self:_check_retail(guild)
+  if not allowed then return false, reason end
   if department ~= nil and department ~= "sephora" and department ~= "lululemon" and department ~= "pandora" then
     return false, "invalid_department"
   end
-  return true, RetailCatalog.list(department)
+  if filters ~= nil and type(filters) ~= "table" then return false, "invalid_filter" end
+  filters = filters or {}
+  if department ~= nil then filters.department = department end
+  if filters.department ~= nil and filters.department ~= "sephora" and filters.department ~= "lululemon" and filters.department ~= "pandora" then
+    return false, "invalid_department"
+  end
+  local result, reason = RetailCatalog.page(filters, page)
+  if not result then return false, reason end
+  return true, result.items, { total = result.total, page = result.page, pages = result.pages, page_size = result.page_size }
 end
 
-function Shop:retail_search(guild, query)
+function Shop:retail_search(guild, query, filters, page)
   if type(query) ~= "string" or #query < 1 or #query > 80 then return false, "invalid_query" end
-  local ok, result = self:retail_browse(guild)
-  if not ok then return false, result end
-  return true, RetailCatalog.search(query)
+  if filters ~= nil and type(filters) ~= "table" then return false, "invalid_filter" end
+  local ok, reason = self:_check_retail(guild)
+  if not ok then return false, reason end
+  local result, catalog_reason = RetailCatalog.search_page(query, filters, page)
+  if not result then return false, catalog_reason end
+  return true, result.items, { total = result.total, page = result.page, pages = result.pages, page_size = result.page_size }
 end
 
-function Shop:retail_item(guild, product_id)
+function Shop:retail_item(guild, product_id, page)
   if type(product_id) ~= "string" or #product_id > 32 then return false, "unknown_item" end
-  local ok, result = self:retail_browse(guild)
-  if not ok then return false, result end
-  local product = RetailCatalog.get_product(product_id)
+  local ok, reason = self:_check_retail(guild)
+  if not ok then return false, reason end
+  local product = RetailCatalog.get_product(product_id, page)
   return product and true or false, product or "unknown_item"
 end
 
 function Shop:retail_user_state(guild, user)
-  local ok, reason = self:retail_browse(guild)
+  local ok, reason = self:_check_retail(guild)
   if not ok then return false, reason end
   return self.retail_state:get(guild, user)
 end
 
 function Shop:update_retail_state(guild, user, collection, action, item_id, quantity)
-  local ok, reason = self:retail_browse(guild)
+  local ok, reason = self:_check_retail(guild)
   if not ok then return false, reason end
   return self.retail_state:update(guild, user, collection, action, item_id, quantity)
 end
@@ -123,6 +140,7 @@ function Shop:buy(guild, user, request_id, item_id, quantity, request_type)
   if mode.commerce ~= "ledger" then return false, "invalid_mode" end
   local item = Catalog.get(item_id)
   if not item then return false, self.sephora:is_look(item_id) and "virtual_mode" or "unknown_item" end
+  if item.product_id and not item.available then return false, "item_unavailable" end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end

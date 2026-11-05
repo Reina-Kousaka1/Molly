@@ -32,4 +32,5 @@ done
 if ! "$LUA_BIN" tests/stress.lua; then test_status=1; fi
 if ! "$LUA_BIN" tests/economy_simulation.lua; then test_status=1; fi
 if ! "$PYTHON_BIN" tests/lavalink_env_transfer.py; then test_status=1; fi
+if ! "$PYTHON_BIN" tests/retail_catalog_import.py; then test_status=1; fi
 exit "$test_status"

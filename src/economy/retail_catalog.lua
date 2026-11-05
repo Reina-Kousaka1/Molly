@@ -1,124 +1,208 @@
--- Reviewed, curated retail data. No network requests or automatic price refresh.
--- The source URLs and price snapshot date are intentionally shipped with each item.
+-- Versioned, reviewed retail snapshots live in data/retail/catalog.tsv.
+-- Runtime reads stream the file so a large future catalog is never cached in full.
 local Pricing = require("src.economy.retail_pricing")
 
-local Catalog = { VERSION = 1, PRICE_CHECKED_AT = "2026-11-05" }
-local rate = { usd_per_eur_x10000 = 11221, as_of = "2026-11-05",
-  source = "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" }
-
-local products = {
-  { id = "de_bhydra", department = "sephora", brand = "Drunk Elephant",
-    name = "B-Hydra™ Intensive Hydration Serum", sku = "1785856", category = "skincare/serum",
-    description = "50 ml hydration serum; description paraphrased from the retailer listing.",
-    eu_cents = 5200, us_cents = 5600, slot = nil, source_eu = "https://www.sephora.fr/p/b-hydra-intensive-hydration---serum-P10013690.html",
-    source_us = "https://www.sephora.com/product/b-hydra-intensive-hydration-gel-P406712?country_switch=us",
-    variants = { { id = "bhydra50", label = "50 ml" } } },
-  { id = "rare_softpinch", department = "sephora", brand = "Rare Beauty",
-    name = "Soft Pinch Liquid Blush", sku = "Sephora item 651745 (shade-specific item references are listed by Sephora)",
-    category = "makeup/blush", description = "7.5 ml liquid blush; short original catalog description.",
-    eu_cents = 2900, us_cents = 2500, source_eu = "https://www.sephora.fr/p/soft-pinch---liquid-blush-651745.html",
-    source_us = "https://www.sephora.com/buy/blush-under-30",
-    variants = { { id = "blushhope", label = "Hope" }, { id = "blushjoy", label = "Joy" },
-      { id = "blushhappy", label = "Happy" }, { id = "blushgrateful", label = "Grateful" },
-      { id = "blushgrace", label = "Grace" }, { id = "blushlove", label = "Love" } } },
-  { id = "lulu_define", department = "lululemon", brand = "lululemon",
-    name = "Define Jacket Nulu", sku = "159403005 (Pink Pearl/Gold/Gold EU product reference)",
-    category = "fashion/jacket", description = "Define Jacket Nulu in Pink Pearl/Gold/Gold; item details summarized in original words.",
-    color = "Pink Pearl/Gold/Gold", eu_cents = 12800, us_cents = 12800, slot = "outfit",
-    source_eu = "https://www.lululemon.de/de-de/p/define-jacke-nulu/159403005.html",
-    source_us = "https://shop.lululemon.com/p/define-jacket-nulu/hnsjuvo8dn?color=76033",
-    variants = { { id = "define0", label = "US 0" }, { id = "define2", label = "US 2" },
-      { id = "define4", label = "US 4" }, { id = "define6", label = "US 6" },
-      { id = "define8", label = "US 8" }, { id = "define10", label = "US 10" },
-      { id = "define12", label = "US 12" }, { id = "define14", label = "US 14" } } },
-  { id = "pandora_heart", department = "pandora", brand = "Pandora",
-    name = "Entwined Heart & Butterfly Pendant Necklace", sku = "394477C01", category = "jewelry/necklace",
-    description = "Sterling silver heart-and-butterfly pendant with clear cubic zirconia stones.",
-    eu_cents = 7500, us_cents = 9800, slot = "necklace",
-    source_eu = "https://de.pandora.net/de/ketten/ketten-mit-anhanger/verschlungenes-herz-und-schmetterling-anhanger-halskette-/394477C01.html",
-    source_us = "https://us.pandora.net/en/necklaces/pendant-necklaces/entwined-heart-butterfly-pendant-necklace/394477C01.html",
-    variants = { { id = "heartneck", label = "One size" } } },
-  { id = "pandora_elevated_heart_ring", department = "pandora", brand = "Pandora",
-    name = "Elevated Heart Ring", sku = "198421C01", category = "jewelry/ring",
-    description = "Sterling-silver heart ring set with a clear heart-shaped cubic zirconia and a pavé-style band.",
-    eu_cents = 6900, us_cents = 9800, slot = "ring",
-    source_eu = "https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01.html",
-    source_us = "https://us.pandora.net/en/rings/elevated-heart-ring/198421C01.html",
-    variants = { { id = "ring48", label = "EU 48" }, { id = "ring50", label = "EU 50" },
-      { id = "ring52", label = "EU 52" }, { id = "ring54", label = "EU 54" },
-      { id = "ring56", label = "EU 56" }, { id = "ring58", label = "EU 58" },
-      { id = "ring60", label = "EU 60" } } },
-  { id = "pandora_rainbow", department = "pandora", brand = "Pandora",
-    name = "Rainbow Tennis Necklace", sku = "394648C01", category = "jewelry/necklace",
-    description = "Sterling silver tennis necklace set with multicoloured stones.",
-    eu_cents = 13900, us_cents = 19000, slot = "necklace",
-    source_eu = "https://at.pandora.net/de/ketten/gliederketten/regenbogenfarbene-tennishalskette/394648C01.html",
-    source_us = "https://us.pandora.net/en/necklaces/chain-necklaces/rainbow-tennis-necklace/394648C01.html",
-    variants = { { id = "rainbowneck", label = "One size" } } },
-  { id = "pandora_moments", department = "pandora", brand = "Pandora",
-    name = "Pandora Moments Heart Closure Snake Chain Bracelet", sku = "582257C00", category = "jewelry/bracelet",
-    description = "14k rose-gold-plated Pandora Moments snake-chain bracelet with heart closure.",
-    eu_cents = 11900, us_cents = 20000, price_note = "US source lists a regular price of $200 and a temporary sale price; the reference uses the regular price.",
-    slot = "bracelet", source_eu = "https://de.pandora.net/de/armbander/charm-armbander/pandora-moments-herzverschluss-schlangen-gliederarmband/582257C00.html",
-    source_us = "https://us.pandora.net/en/charms-bracelets/bracelets/charm-bracelets/pandora-moments-heart-closure-snake-chain-bracelet/582257C00.html",
-    variants = { { id = "bracelet16", label = "16 cm" }, { id = "bracelet21", label = "21 cm" },
-      { id = "bracelet23", label = "23 cm" } } },
-}
-
-local by_id, by_product, public_products = {}, {}, {}
-for _, source in ipairs(products) do
-  local product = {}
-  for key, value in pairs(source) do if key ~= "variants" then product[key] = value end end
-  product.variants = {}
-  by_product[source.id] = product
-  public_products[#public_products + 1] = product
-  for _, option in ipairs(source.variants) do
-    local price, snapshot = Pricing.snapshot(source.eu_cents, source.us_cents, rate, Catalog.PRICE_CHECKED_AT)
-    assert(price, "invalid curated retail price data")
-    local item = { id = option.id, product_id = source.id, department = source.department,
-      brand = source.brand, name = source.name, variant = option.label, sku = source.sku,
-      category = source.category, description = source.description, color = source.color,
-      kind = source.slot and "fashion" or "collectible", slot = source.slot, price = price,
-      price_snapshot = snapshot, price_note = source.price_note, source_eu = source.source_eu,
-      source_us = source.source_us, catalog_version = Catalog.VERSION, available = true }
-    by_id[option.id] = item
-    product.variants[#product.variants + 1] = item
+local Catalog = { VERSION = 2, SCHEMA_VERSION = 2, PAGE_SIZE = 10, MAX_PAGE_SIZE = 10, MAX_VARIANTS_PER_PRODUCT = 500 }
+local fields = { "catalog_version", "product_id", "id", "department", "brand", "name", "sku", "category",
+  "description", "color", "variant", "kind", "slot", "eu_cents", "us_cents", "fx_usd_per_eur_x10000",
+  "fx_as_of", "fx_source", "checked_at", "source_eu", "source_us", "price_note", "available" }
+local function root_path()
+  local source = debug.getinfo(1, "S").source
+  if source:sub(1, 1) == "@" then source = source:sub(2) end
+  local root = source:match("^(.*)[/\\]src[/\\]economy[/\\]retail_catalog%.lua$")
+  return (root and (root .. "/") or "") .. "data/retail/catalog.tsv"
+end
+local DATA_PATH = root_path()
+do
+  local file = io.open(DATA_PATH, "r")
+  if file then
+    local first = file:read("*l") or ""
+    local second = file:read("*l") or ""
+    local version = first:match("^# catalog_version=(%d+)$")
+    if version then Catalog.VERSION = tonumber(version) end
+    local schema = second:match("^# schema_version=(%d+)$")
+    if tonumber(schema) ~= Catalog.SCHEMA_VERSION then Catalog.INVALID_SCHEMA = true end
+    file:close()
   end
+end
+local function normalized_page(page, page_size)
+  page = tonumber(page)
+  if not page or page ~= page or page == math.huge or page == -math.huge then page = 1 end
+  page = math.max(1, math.min(1000000, math.floor(page)))
+  page_size = tonumber(page_size)
+  if not page_size or page_size ~= page_size or page_size == math.huge or page_size == -math.huge then page_size = Catalog.PAGE_SIZE end
+  page_size = math.min(Catalog.MAX_PAGE_SIZE, math.max(1, math.floor(page_size)))
+  return page, page_size
+end
+
+local function split(line)
+  local result, start = {}, 1
+  while true do
+    local at = line:find("\t", start, true)
+    if not at then result[#result + 1] = line:sub(start); break end
+    result[#result + 1] = line:sub(start, at - 1)
+    start = at + 1
+  end
+  return result
+end
+
+local function read_row(line)
+  if Catalog.INVALID_SCHEMA then return nil, "catalog_schema_unsupported" end
+  local values = split(line)
+  if #values ~= #fields then return nil, "catalog_invalid" end
+  local row = {}
+  for index, key in ipairs(fields) do row[key] = values[index] end
+  row.catalog_version, row.eu_cents, row.us_cents, row.fx_usd_per_eur_x10000 =
+    tonumber(row.catalog_version), tonumber(row.eu_cents), tonumber(row.us_cents), tonumber(row.fx_usd_per_eur_x10000)
+  if row.catalog_version ~= Catalog.VERSION or type(row.id) ~= "string" or not row.id:match("^[%w_%-]+$")
+    or #row.id > 32 or not row.product_id:match("^[%w_%-]+$") or #row.product_id > 64
+    or (row.department ~= "sephora" and row.department ~= "lululemon" and row.department ~= "pandora")
+    or row.brand == "" or row.name == "" or row.category == "" or row.variant == ""
+    or (row.kind ~= "fashion" and row.kind ~= "collectible")
+    or (row.slot ~= "-" and row.slot ~= "outfit" and row.slot ~= "head" and row.slot ~= "accessory"
+      and row.slot ~= "ring" and row.slot ~= "necklace" and row.slot ~= "bracelet")
+    or (row.available ~= "true" and row.available ~= "false") then return nil, "catalog_invalid" end
+  local rate = { usd_per_eur_x10000 = row.fx_usd_per_eur_x10000, as_of = row.fx_as_of, source = row.fx_source }
+  local price, snapshot = Pricing.snapshot(row.eu_cents, row.us_cents, rate, row.checked_at)
+  if not price then return nil, "catalog_invalid" end
+  row.price, row.price_snapshot = price, snapshot
+  row.available = row.available == "true"
+  if row.color == "-" then row.color = nil end
+  if row.slot == "-" then row.slot = nil end
+  if row.price_note == "-" then row.price_note = nil end
+  return row
+end
+
+local function each_product(callback)
+  local file = io.open(DATA_PATH, "r")
+  if not file then return false, "catalog_unavailable" end
+  local current, current_id = nil, nil
+  local function finish()
+    if not current then return true end
+    current.available = false
+    for _, variant in ipairs(current.variants) do if variant.available then current.available = true end end
+    return callback(current)
+  end
+  for line in file:lines() do
+    if line ~= "" and line:sub(1, 1) ~= "#" then
+      local row, reason = read_row(line)
+      if not row then file:close(); return false, reason end
+      if row.product_id ~= current_id then
+        local keep_going, callback_reason = finish()
+        if keep_going == false then
+          file:close()
+          if callback_reason == "stop" then return true end
+          return false, callback_reason
+        end
+        current_id, current = row.product_id, {
+          id = row.product_id, department = row.department, brand = row.brand, name = row.name, sku = row.sku,
+          category = row.category, description = row.description, color = row.color,
+          kind = row.kind, slot = row.slot,
+          source_eu = row.source_eu, source_us = row.source_us, price_note = row.price_note,
+          catalog_version = row.catalog_version, variants = {},
+        }
+      elseif current.brand ~= row.brand or current.name ~= row.name or current.department ~= row.department
+        or current.category ~= row.category then file:close(); return false, "catalog_product_conflict" end
+      if #current.variants >= Catalog.MAX_VARIANTS_PER_PRODUCT then file:close(); return false, "catalog_product_capacity" end
+      current.variants[#current.variants + 1] = row
+    end
+  end
+  local keep_going, callback_reason = finish()
+  file:close()
+  if keep_going == false then return callback_reason == "stop", callback_reason end
+  return true
 end
 
 local function copy(value)
   if type(value) ~= "table" then return value end
-  local result = {}
-  for key, item in pairs(value) do result[key] = copy(item) end
-  return result
+  local result = {}; for key, item in pairs(value) do result[key] = copy(item) end; return result
+end
+local function contains(haystack, needle)
+  return needle == nil or needle == "" or haystack:lower():find(needle:lower(), 1, true) ~= nil
+end
+local function matches(product, filters, include_archived)
+  filters = filters or {}
+  if filters.department and filters.department ~= product.department then return false end
+  if filters.brand and not contains(product.brand, filters.brand) then return false end
+  if filters.category and not contains(product.category, filters.category) then return false end
+  if filters.query and not (contains(product.name, filters.query) or contains(product.brand, filters.query)
+    or contains(product.category, filters.query)) then return false end
+  return include_archived or product.available
 end
 
-function Catalog.get(id) return by_id[id] and copy(by_id[id]) or nil end
-function Catalog.get_product(id) return by_product[id] and copy(by_product[id]) or nil end
-function Catalog.list(department)
-  local result = {}
-  for _, product in ipairs(public_products) do
-    if department == nil or department == product.department then result[#result + 1] = copy(product) end
-  end
-  return result
+function Catalog.get(id)
+  if type(id) ~= "string" or #id > 32 then return nil end
+  local found
+  local ok = each_product(function(product)
+    for _, variant in ipairs(product.variants) do if variant.id == id then found = copy(variant); return false, "stop" end end
+  end)
+  if not ok then return nil end
+  return found
 end
-function Catalog.variants()
-  local result = {}
-  for _, product in ipairs(public_products) do
-    for _, variant in ipairs(product.variants) do result[#result + 1] = copy(variant) end
-  end
-  return result
+
+function Catalog.get_product(id, page, page_size)
+  if type(id) ~= "string" or #id > 64 then return nil end
+  page, page_size = normalized_page(page, page_size)
+  local found
+  local ok = each_product(function(product)
+    if product.id == id then
+      local variants, available_count = {}, 0
+      for _, variant in ipairs(product.variants) do
+        if variant.available then
+          available_count = available_count + 1
+          if available_count > (page - 1) * page_size and #variants < page_size then variants[#variants + 1] = copy(variant) end
+        end
+      end
+      product.variants, product.variant_count, product.page, product.page_size = variants, available_count, page, page_size
+      product.pages = math.max(1, math.ceil(available_count / page_size))
+      found = copy(product)
+      return false, "stop"
+    end
+  end)
+  if not ok then return nil end
+  return found
+end
+
+function Catalog.page(filters, page, page_size)
+  filters = type(filters) == "string" and { department = filters } or (filters or {})
+  page, page_size = normalized_page(page, page_size)
+  local products, total = {}, 0
+  local ok, reason = each_product(function(product)
+    if matches(product, filters, false) then
+      total = total + 1
+      if total > (page - 1) * page_size and #products < page_size then products[#products + 1] = copy(product) end
+    end
+  end)
+  if not ok then return nil, reason end
+  return { items = products, total = total, page = page, page_size = page_size, pages = math.max(1, math.ceil(total / page_size)) }
+end
+
+function Catalog.search_page(query, filters, page, page_size)
+  if type(query) ~= "string" or #query < 1 or #query > 80 then return nil, "invalid_query" end
+  filters = filters or {}; filters.query = query
+  return Catalog.page(filters, page, page_size)
+end
+
+-- Compatibility helpers return only the first bounded page. New callers should use page().
+function Catalog.list(department)
+  local result = Catalog.page({ department = department }, 1, Catalog.MAX_PAGE_SIZE)
+  return result and result.items or {}
 end
 function Catalog.search(query, department)
-  if type(query) ~= "string" then return {} end
-  local needle, result = query:lower(), {}
-  if #needle == 0 or #needle > 80 then return result end
-  for _, product in ipairs(public_products) do
-    if (department == nil or department == product.department)
-      and (product.name:lower():find(needle, 1, true) or product.brand:lower():find(needle, 1, true)
-        or product.category:lower():find(needle, 1, true)) then result[#result + 1] = copy(product) end
-  end
-  return result
+  local result = Catalog.search_page(query, { department = department }, 1, Catalog.MAX_PAGE_SIZE)
+  return result and result.items or {}
+end
+function Catalog.variants(limit)
+  limit = tonumber(limit)
+  if not limit or limit ~= limit or limit == math.huge or limit == -math.huge then limit = 1000 end
+  limit = math.min(1000, math.max(1, math.floor(limit)))
+  local result = {}
+  local ok = each_product(function(product)
+    for _, variant in ipairs(product.variants) do
+      if variant.available and #result < limit then result[#result + 1] = copy(variant) end
+    end
+  end)
+  return ok and result or {}
 end
 function Catalog.departments() return { "sephora", "lululemon", "pandora" } end
 return Catalog

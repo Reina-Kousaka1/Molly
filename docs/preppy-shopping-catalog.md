@@ -1,14 +1,16 @@
 # Molly V1.2 virtual retail catalog
 
-This is a reviewed, deliberately curated catalog snapshot. It is not a full retailer
-catalog or a live availability feed. Purchases are fictional Molly Coin transactions;
+This is a reviewed, deliberately curated catalog snapshot stored in
+`data/retail/catalog.tsv`. It is not a full retailer catalog or a live availability feed. Purchases are fictional Molly Coin transactions;
 Molly is not affiliated with Sephora, lululemon, or Pandora. No product images or
 retailer descriptions are copied into the bot.
 
 ## Snapshot rules
 
-- Catalog schema version: `1` (`src/economy/retail_catalog.lua`). Product IDs are
-  stable; inventory owns variant IDs.
+- TSV schema version: `2`; catalog snapshot version is stored in the first line of
+  `data/retail/catalog.tsv`. Product IDs and variant IDs remain stable; inventory owns
+  variant IDs. Each row is a versioned variant with product metadata, reference-price
+  snapshots, source URLs, and availability status.
 - Price snapshot checked: `2026-11-05`.
 - FX: ECB reference rate `1 EUR = 1.1221 USD`, stored as `11221 / 10000`.
 - Formula, using integer cents: round half up `((EU cents + USD cents / USD-per-EUR) * 25 / 19)`.
@@ -60,16 +62,61 @@ this virtual catalog, not current stock at a retailer.
 - [Pandora US: bracelet, $200 regular list price with an observed temporary sale](https://us.pandora.net/en/charms-bracelets/bracelets/charm-bracelets/pandora-moments-heart-closure-snake-chain-bracelet/582257C00.html)
 - [ECB euro reference rates](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html)
 
+## Catalog source and coverage limits
+
+The catalog remains a verified subset: Sephora has 2 products / 7 variants and
+lululemon has 1 product / 8 variants. Coverage represented here is only skincare
+serum and makeup blush for Sephora, and one jacket/color family for lululemon.
+Pandora remains limited to the four requested products (12 variants). All other
+brands, categories, products, shades, sizes, colors, and sets are not represented.
+The selected existing variant IDs are preserved.
+
+No official public full-catalog feed or product API was found for either Sephora or
+lululemon. Their current site terms restrict automated data extraction: see
+[Sephora Terms of Use](https://www.sephora.com/beauty/terms-of-use?country_switch=us)
+and [lululemon Terms of Use](https://shop.lululemon.com/help/legal/terms-of-use).
+This repository does not scrape the retail sites, access undocumented endpoints,
+work around access controls, or ingest third-party scraped datasets. Broader updates
+require a retailer-authorized export, licensed feed, or another explicitly permitted
+source. Product, SKU, price, variant, and availability coverage beyond these rows
+has not been verified.
+
+## Versioned catalog import
+
+`tools/retail_catalog.py` validates reviewed TSV snapshots, previews diffs, then merges
+them without deleting old variants. The tool makes no network requests. An import
+file must include its snapshot version on its first line and one row per variant;
+the current schema is described by the column order in the TSV and the `FIELDS` list
+in the importer.
+
+```sh
+python3 tools/retail_catalog.py validate authorized-export.tsv
+python3 tools/retail_catalog.py preview --base data/retail/catalog.tsv --input authorized-export.tsv
+python3 tools/retail_catalog.py apply --base data/retail/catalog.tsv --input authorized-export.tsv --output /tmp/catalog-preview.tsv
+```
+
+Review the preview and generated file before replacing the tracked catalog. By default,
+variants omitted from a partial import are retained unchanged. Only pass
+`--complete-snapshot` for a source known to be an authorized, complete snapshot; then
+omitted variants are marked unavailable, never deleted. Inventory IDs and historical
+purchase snapshots remain resolvable. Imports reject duplicate IDs, inconsistent
+product metadata, untrusted source hosts, invalid prices, or missing source/FX dates.
+Run Lua and importer tests before adopting an output snapshot.
+
+Runtime browse and search stream the TSV without retaining a product or variant
+catalog cache; only the current product (capped at 500 variants) and requested page
+are materialized. Pages are capped at ten products / variants. Filters are literal
+case-insensitive matches for department, category, and brand. Archived variants are
+excluded from new browse/search and purchases but remain readable for old inventory.
+
 ## Explicit exclusions and future integration points
 
 - The requested silver heart ring is included as Pandora Elevated Heart Ring `198421C01`,
   matched to the supplied screenshot and official Pandora product references. The current
   curated price snapshot uses €69 EU / $98 US and the documented ECB rate. The listed
   size variants are EU 48, 50, 52, 54, 56, 58, and 60; current retailer stock is not modeled.
-- Sephora and lululemon coverage is a small verified sample, not comprehensive.
-  Pandora contains the four selected pieces above.
-- No official product feed/API was identified or integrated. There is no scraper,
-  automatic stock refresh, automatic price refresh, or FX refresh.
+- There is no authorized product feed integrated, scraper, automatic stock refresh,
+  automatic price refresh, or FX refresh.
 - `/shop browse`, `/shop search`, and `/shop item` operate on the curated subset;
   `/shop buy item:<variant-id>` purchases a listed variant. `/shop cart`, `/shop
   wishlist`, and `/shop favorites` have guild-scoped bounded persistence. The cart is
@@ -80,6 +127,10 @@ this virtual catalog, not current stock at a retailer.
 - Fashion equipment supports outfit, necklace, and bracelet slots. Ring remains
   available as a slot type for a future verified item. Other product categories are
   virtual collectibles, not equipable objects.
+- A product-page view, category/brand filters, bounded pagination, a validated
+  import-preview workflow, and non-destructive archival are implemented. There is no
+  live catalog service, cart checkout, automatic import scheduling, or complete
+  Sephora/lululemon catalog yet.
 - Daily claims award 1,500–3,500 base coins, weekly claims 6,000–12,000, and work
   claims 400–1,800. Work cooldown is six hours. Daily streak milestones add 250 at
   streak 5, 500 at 10, and 750 at 25; weekly streak milestones add 1,500 at 4 and
