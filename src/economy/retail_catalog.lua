@@ -37,13 +37,24 @@ local function normalized_page(page, page_size)
 end
 
 local function split(line)
-  local result, start = {}, 1
-  while true do
-    local at = line:find("\t", start, true)
-    if not at then result[#result + 1] = line:sub(start); break end
-    result[#result + 1] = line:sub(start, at - 1)
-    start = at + 1
+  local result, field, in_quotes, index = {}, {}, false, 1
+  while index <= #line do
+    local char = line:sub(index, index)
+    if char == '"' then
+      if in_quotes and line:sub(index + 1, index + 1) == '"' then
+        field[#field + 1] = '"'; index = index + 1
+      else
+        in_quotes = not in_quotes
+      end
+    elseif char == "\t" and not in_quotes then
+      result[#result + 1] = table.concat(field); field = {}
+    else
+      field[#field + 1] = char
+    end
+    index = index + 1
   end
+  if in_quotes then return nil end
+  result[#result + 1] = table.concat(field)
   return result
 end
 
@@ -55,6 +66,7 @@ end
 local function read_row(line)
   if Catalog.INVALID_SCHEMA then return nil, "catalog_schema_unsupported" end
   local values = split(line)
+  if not values then return nil, "catalog_invalid" end
   if #values ~= #fields then return nil, "catalog_invalid" end
   local row = {}
   for index, key in ipairs(fields) do row[key] = values[index] end

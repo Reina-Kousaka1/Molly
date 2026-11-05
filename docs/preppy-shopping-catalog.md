@@ -37,7 +37,7 @@ retailer descriptions are copied into the bot.
 | Pandora | Rainbow Tennis Necklace, 394648C01 | 1 | €139 / $190 | 40,563 |
 | Pandora | Moments Heart Closure Snake Chain Bracelet, 582257C00 | 3 verified lengths | €119 / $200 list | 39,104 |
 
-Totals: 7 products and 27 selectable variants. The six blush shades are Hope, Joy,
+Totals: 10 products and 30 selectable variants. The six blush shades are Hope, Joy,
 Happy, Grateful, Grace, and Love. The three verified bracelet lengths included are 16, 21,
 and 23 cm. The Rainbow Tennis and heart pendant necklaces are represented
 as one-size variants. The silver Elevated Heart Ring shown in the user-provided screenshot
@@ -45,14 +45,32 @@ matches Pandora's `198421C01` reference; its seven virtual variants use EU ring 
 in two-size steps. Retail availability can change; `available` means included in
 this virtual catalog, not current stock at a retailer.
 
+Three additional products were added as individual metadata records on 2026-11-05:
+
+| Department | Product | Variant recorded | EUR / USD list price | Coin snapshot |
+| --- | --- | --- | ---: | ---: |
+| Sephora | Rare Beauty Positive Light Luminizing Lip Gloss | Blaze, 3.3 ml | €22 / $20 | 5,239 |
+| lululemon | lululemon Align™ High-Rise Pant 25\" | US size 8; color not specified | €98 / $98 | 24,383 |
+| Pandora | Snowflake Charm | One size | €45 / $58 | 12,720 |
+
+The variant facts and regional list prices were checked on the individual retailer pages
+linked below. No marketing descriptions, imagery, logos, or unverified SKUs were added.
+Where a page exposed only a product reference or item ID, it is stored as a product
+reference and not mislabeled as a SKU. The Align Pant variant records one observed size
+and does not claim a complete size/color selection.
+
 ## Sources
 
 - [Sephora France: B-Hydra 50 ml, €52](https://www.sephora.fr/p/b-hydra-intensive-hydration---serum-P10013690.html)
 - [Sephora US: B-Hydra 50 ml, $56, item 1785856](https://www.sephora.com/product/b-hydra-intensive-hydration-gel-P406712?country_switch=us)
 - [Sephora France: Soft Pinch, €29 and listed shades](https://www.sephora.fr/p/soft-pinch---liquid-blush-P10017094.html)
 - [Sephora US: Soft Pinch, $25](https://www.sephora.com/product/rare-beauty-by-selena-gomez-soft-pinch-liquid-blush-P97989778)
+- [Sephora France: Rare Beauty Positive Light Luminizing Lip Gloss, Blaze 3.3 ml, €22](https://www.sephora.fr/p/positive-light-luminizing-lip-gloss---brillant-a-levres-illuminat-763943.html)
+- [Sephora US: Rare Beauty Positive Light Luminizing Lip Gloss, Blaze 3.3 ml, $20, item 2876365](https://www.sephora.com/product/positive-light-luminizing-lip-gloss-P516855?skuId=2876365)
 - [lululemon EU: Define Jacket Nulu, Pink Pearl/Gold/Gold, €128, SKU 158547109](https://www.eu.lululemon.com/en-lu/p/define-jacket-nulu/158547109.html)
 - [lululemon US: Define Jacket Nulu, Pink Pearl, $128 and sizes 0–14](https://shop.lululemon.com/p/define-jacket-nulu/hnsjuvo8dn?color=76033)
+- [lululemon EU: Align™ High-Rise Pant 25\", €98](https://www.eu.lululemon.com/en-lu/p/lululemon-align%E2%84%A2-high-rise-pant-25%22/prod2020012.html)
+- [lululemon US: Align™ High-Rise Pant 25\", $98, size 8](https://shop.lululemon.com/p/align-pant-2/i4goprzy85?color=77648&locale=en_US)
 - [Pandora Germany: Entwined Heart & Butterfly, €75, 394477C01](https://de.pandora.net/de/ketten/ketten-mit-anhanger/verschlungenes-herz-und-schmetterling-anhanger-halskette-/394477C01.html)
 - [Pandora US: Entwined Heart & Butterfly, $98](https://us.pandora.net/en/necklaces/pendant-necklaces/entwined-heart-butterfly-pendant-necklace/394477C01.html)
 - [Pandora Germany: Elevated Heart Ring, sterling silver, €69, 198421C01](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01.html)
@@ -62,26 +80,30 @@ this virtual catalog, not current stock at a retailer.
 - [Pandora US: Rainbow Tennis Necklace, $190](https://us.pandora.net/en/necklaces/chain-necklaces/rainbow-tennis-necklace/394648C01.html)
 - [Pandora Germany: rose-plated Heart Closure Snake Chain Bracelet, €119, 582257C00](https://de.pandora.net/de/armbander/charm-armbander/pandora-moments-herzverschluss-schlangen-gliederarmband/582257C00.html)
 - [Pandora US: bracelet, $200 regular list price with an observed temporary sale](https://us.pandora.net/en/charms-bracelets/bracelets/charm-bracelets/pandora-moments-heart-closure-snake-chain-bracelet/582257C00.html)
+- [Pandora Germany: Snowflake Charm, 14k gold plating, €45, ID 764249C01](https://de.pandora.net/de/charms/schneeflocke-charm/764249C01.html)
+- [Pandora US: Snowflake Charm, 14k gold plating, $58, ID 764249C01](https://us.pandora.net/en/charms/charms/snowflake-charm/764249C01.html)
 - [ECB euro reference rates](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html)
 
 ## Catalog source and coverage limits
 
-The catalog remains a verified subset: Sephora has 2 products / 7 variants and
-lululemon has 1 product / 8 variants. Coverage represented here is only skincare
-serum and makeup blush for Sephora, and one jacket/color family for lululemon.
-Pandora remains limited to the four requested products (12 variants). All other
+The catalog remains a small verified subset: Sephora has 3 products / 8 variants and
+lululemon has 2 products / 9 variants. Coverage represented here is skincare serum,
+makeup blush, and one lip-gloss shade for Sephora, plus one jacket/color family and one
+leggings size for lululemon. Pandora has the four original products plus one charm
+(13 variants). All other
 brands, categories, products, shades, sizes, colors, and sets are not represented.
 The selected existing variant IDs are preserved.
 
-No official public full-catalog feed or product API was found for either Sephora or
-lululemon. Their current site terms restrict automated data extraction: see
-[Sephora Terms of Use](https://www.sephora.com/beauty/terms-of-use?country_switch=us)
-and [lululemon Terms of Use](https://shop.lululemon.com/help/legal/terms-of-use).
-This repository does not scrape the retail sites, access undocumented endpoints,
-work around access controls, or ingest third-party scraped datasets. Broader updates
-require a retailer-authorized export, licensed feed, or another explicitly permitted
-source. Product, SKU, price, variant, and availability coverage beyond these rows
-has not been verified.
+No official public full-catalog feed or product API was identified. The three additions
+were entered manually from individual public product pages; the importer itself makes
+no network requests. This is a limited factual snapshot, not evidence that broader reuse
+is authorized. Sephora's [Terms of Use](https://www.sephora.com/beauty/terms-of-use?country_switch=us)
+restrict scraping, extraction, and other use of site content. lululemon's [Terms of Use](https://shop.lululemon.com/help/legal/terms-of-use)
+restrict collecting or using product listings and automated extraction. Pandora's [UK terms](https://uk.pandora.net/en/tandcs/terms-and-conditions.html)
+prohibit text/data mining and web scraping. Public visibility alone is not permission.
+No images, logos, promotional copy, automated harvesting, undocumented APIs, access-control
+bypasses, or third-party scraped datasets were used. Further additions should use retailer-
+approved data or be reviewed for applicable rights and terms. Availability may be stale.
 
 Regional product references are stored separately from optional SKUs. Soft Pinch
 uses Sephora references `P10017094` (France) and `P97989778` (US); its variant rows

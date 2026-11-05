@@ -102,7 +102,7 @@ def validate_row(row, line, version):
             raise CatalogError(f"line {line}: invalid regional SKU/reference")
     if row["product_ref_eu"] == "-" or row["product_ref_us"] == "-":
         raise CatalogError(f"line {line}: both regional product references are required")
-    if any(any(char in row[key] for char in "\r\n\t\x00\"") for key in FIELDS):
+    if any(any(char in row[key] for char in "\r\n\t\x00") for key in FIELDS):
         raise CatalogError(f"line {line}: control character in field")
     if (row["kind"] not in ("fashion", "collectible") or row["slot"] not in
             ("-", "outfit", "head", "accessory", "ring", "necklace", "bracelet")):

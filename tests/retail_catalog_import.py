@@ -40,8 +40,43 @@ def write(path, rows, version=2):
 class RetailCatalogImportTests(unittest.TestCase):
     def test_shipped_catalog_is_a_valid_snapshot_with_existing_product_count(self):
         _, rows = read_catalog(Path("data/retail/catalog.tsv"))
-        self.assertEqual(len(rows), 27)
-        self.assertEqual(len({item["product_id"] for item in rows}), 7)
+        self.assertEqual(len(rows), 30)
+        self.assertEqual(len({item["product_id"] for item in rows}), 10)
+        original_ids = {
+            "bhydra50", "blushhope", "blushjoy", "blushhappy", "blushgrateful", "blushgrace", "blushlove",
+            "define0", "define2", "define4", "define6", "define8", "define10", "define12", "define14",
+            "heartneck", "ring48", "ring50", "ring52", "ring54", "ring56", "ring58", "ring60",
+            "rainbowneck", "bracelet16", "bracelet21", "bracelet23",
+        }
+        by_id = {item["id"]: item for item in rows}
+        self.assertTrue(original_ids.issubset(by_id))
+        self.assertEqual(len(original_ids), 27)
+        expected_prices = {
+            "de_bhydra": ("5200", "5600"), "rare_softpinch": ("2900", "2500"),
+            "lulu_define": ("12800", "12800"), "pandora_heart": ("7500", "9800"),
+            "pandora_elevated_heart_ring": ("6900", "9800"), "pandora_rainbow": ("13900", "19000"),
+            "pandora_moments": ("11900", "20000"),
+        }
+        for item in rows:
+            if item["product_id"] in expected_prices:
+                self.assertEqual((item["eu_cents"], item["us_cents"]), expected_prices[item["product_id"]])
+        additions = {item["product_id"]: item for item in rows if item["product_id"] in {
+            "rare_positive_light_gloss", "lulu_align25", "pandora_snowflake_charm"}}
+        self.assertEqual(set(additions), {"rare_positive_light_gloss", "lulu_align25", "pandora_snowflake_charm"})
+        self.assertEqual((additions["rare_positive_light_gloss"]["eu_cents"],
+                          additions["rare_positive_light_gloss"]["us_cents"]), ("2200", "2000"))
+        self.assertEqual(additions["rare_positive_light_gloss"]["source_eu"].split("/")[2], "www.sephora.fr")
+        self.assertEqual(additions["lulu_align25"]["name"], 'lululemon Align™ High-Rise Pant 25"')
+        self.assertEqual(additions["pandora_snowflake_charm"]["product_ref_eu"], "764249C01")
+
+    def test_importer_round_trips_exact_product_names_with_quotes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quoted.tsv"
+            value = row()
+            value["name"] = 'Official product name, 25"'
+            write(path, [value])
+            _, rows = read_catalog(path)
+            self.assertEqual(rows[0]["name"], 'Official product name, 25"')
 
     def test_validates_realistic_export_shape_and_prices(self):
         with tempfile.TemporaryDirectory() as directory:
