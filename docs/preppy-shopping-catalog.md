@@ -29,13 +29,16 @@ retailer descriptions are copied into the bot.
 | Sephora | Rare Beauty Soft Pinch Liquid Blush, 7.5 ml | 6 selected shades | €29 / $25 | 6,747 |
 | lululemon | Define Jacket Nulu, Pink Pearl/Gold/Gold | US 0–14 (even sizes) | €128 / $128 | 31,851 |
 | Pandora | Entwined Heart & Butterfly Pendant Necklace, 394477C01 | 1 | €75 / $98 | 21,361 |
+| Pandora | Elevated Heart Ring, 198421C01 | EU 48, 50, 52, 54, 56, 58, 60 | €69 / $98 | 20,571 |
 | Pandora | Rainbow Tennis Necklace, 394648C01 | 1 | €139 / $190 | 40,570 |
 | Pandora | Moments Heart Closure Snake Chain Bracelet, 582257C00 | 3 verified lengths | €119 / $200 list | 39,111 |
 
-Totals: 6 products and 20 selectable variants. The six blush shades are Hope, Joy,
+Totals: 7 products and 27 selectable variants. The six blush shades are Hope, Joy,
 Happy, Grateful, Grace, and Love. The three verified bracelet lengths included are 16, 21,
 and 23 cm. The Rainbow Tennis and heart pendant necklaces are represented
-as one-size variants. Retail availability can change; `available` means included in
+as one-size variants. The silver Elevated Heart Ring shown in the user-provided screenshot
+matches Pandora's `198421C01` reference; its seven virtual variants use EU ring sizes 48–60
+in two-size steps. Retail availability can change; `available` means included in
 this virtual catalog, not current stock at a retailer.
 
 ## Sources
@@ -48,6 +51,9 @@ this virtual catalog, not current stock at a retailer.
 - [lululemon US: Define Jacket Nulu, Pink Pearl, $128 and sizes 0–14](https://shop.lululemon.com/p/define-jacket-nulu/hnsjuvo8dn?color=76033)
 - [Pandora Germany: Entwined Heart & Butterfly, €75, 394477C01](https://de.pandora.net/de/ketten/ketten-mit-anhanger/verschlungenes-herz-und-schmetterling-anhanger-halskette-/394477C01.html)
 - [Pandora US: Entwined Heart & Butterfly, $98](https://us.pandora.net/en/necklaces/pendant-necklaces/entwined-heart-butterfly-pendant-necklace/394477C01.html)
+- [Pandora Germany: Elevated Heart Ring, sterling silver, €69, 198421C01](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01.html)
+- [Pandora US: Elevated Heart Ring, sterling silver, $98, 198421C01](https://us.pandora.net/en/rings/elevated-heart-ring/198421C01.html)
+- [Pandora Germany: product page with size 48](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01-48.html), [size 50](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01-50.html), [size 52](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01-52.html), [size 56](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01-56.html), and [size 60](https://de.pandora.net/de/ringe/statement-ringe/erhabenes-herz-ring/198421C01-60.html); size 58 is listed on [Pandora Spain](https://es.pandora.net/es/anillos/anillos/anillos-de-plata/anillo-corazon-en-relieve/198421C01-58.html). Pandora's [German size guide](https://de.pandora.net/on/demandware.store/Sites-de-DE-Site/de_DE/Product-SizeGuide?pid=190980) documents the EU sizes.
 - [Pandora Austria: Rainbow Tennis Necklace, €139, 394648C01](https://at.pandora.net/de/ketten/gliederketten/regenbogenfarbene-tennishalskette/394648C01.html)
 - [Pandora US: Rainbow Tennis Necklace, $190](https://us.pandora.net/en/necklaces/chain-necklaces/rainbow-tennis-necklace/394648C01.html)
 - [Pandora Germany: rose-plated Heart Closure Snake Chain Bracelet, €119, 582257C00](https://de.pandora.net/de/armbander/charm-armbander/pandora-moments-herzverschluss-schlangen-gliederarmband/582257C00.html)
@@ -56,13 +62,12 @@ this virtual catalog, not current stock at a retailer.
 
 ## Explicit exclusions and future integration points
 
-- The requested €69 silver heart ring is not included. The referenced screenshot was
-  not available in the repository or conversation attachment set, and the closest
-  €69 official Pandora match found was gold plated, which does not match the specified
-  silver finish. Do not silently substitute it. Add the ring only after its exact
-  official model/reference is confirmed.
+- The requested silver heart ring is included as Pandora Elevated Heart Ring `198421C01`,
+  matched to the supplied screenshot and official Pandora product references. The current
+  curated price snapshot uses €69 EU / $98 US and the documented ECB rate. The listed
+  size variants are EU 48, 50, 52, 54, 56, 58, and 60; current retailer stock is not modeled.
 - Sephora and lululemon coverage is a small verified sample, not comprehensive.
-  Pandora contains the three verified pieces above, not a fourth ring.
+  Pandora contains the four selected pieces above.
 - No official product feed/API was identified or integrated. There is no scraper,
   automatic stock refresh, automatic price refresh, or FX refresh.
 - `/shop browse`, `/shop search`, and `/shop item` operate on the curated subset;

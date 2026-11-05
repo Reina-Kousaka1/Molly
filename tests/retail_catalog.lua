@@ -30,9 +30,9 @@ test("price calculator rejects missing, negative, malformed and overflowing inpu
 end)
 
 test("curated catalog is bounded, versioned, and contains only listed product variants", function()
-  assert(Catalog.VERSION == 1 and #Catalog.list() == 6)
+  assert(Catalog.VERSION == 1 and #Catalog.list() == 7)
   local variants, seen = Catalog.variants(), {}
-  assert(#variants == 20)
+  assert(#variants == 27)
   for _, item in ipairs(variants) do
     assert(not seen[item.id] and #item.id <= 32)
     seen[item.id] = true
@@ -43,11 +43,21 @@ test("curated catalog is bounded, versioned, and contains only listed product va
 end)
 
 test("catalog filters departments and searches as literal case-insensitive text", function()
-  assert(#Catalog.list("pandora") == 3)
+  assert(#Catalog.list("pandora") == 4)
   assert(#Catalog.search("DRUNK ELEPHANT") == 1)
   assert(#Catalog.search(".") == 0)
   assert(#Catalog.search(string.rep("x", 81)) == 0)
   assert(#Catalog.list("unknown") == 0)
+end)
+
+test("Pandora heart ring uses the verified silver product and has size variants", function()
+  local product = Catalog.get_product("pandora_elevated_heart_ring")
+  assert(product and product.sku == "198421C01" and product.slot == "ring")
+  assert(#product.variants == 7 and product.variants[1].id == "ring48"
+    and product.variants[7].id == "ring60")
+  local ring = Catalog.get("ring56")
+  assert(ring.price_snapshot.eu_cents == 6900 and ring.price_snapshot.us_cents == 9800)
+  assert(ring.price == 20571 and Pricing.valid_snapshot(ring.price_snapshot, ring.price))
 end)
 
 test("catalog results are defensive copies", function()

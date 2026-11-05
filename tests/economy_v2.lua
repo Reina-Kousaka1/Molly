@@ -115,7 +115,7 @@ test("retail variant purchase is atomic, idempotent, guild-scoped, and keeps its
     cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
   assert(shop:set_enabled("73", true))
   local listed, products = shop:retail_browse("73", "pandora")
-  assert(listed and #products == 3)
+  assert(listed and #products == 4)
   local detail_ok, detail = shop:retail_item("73", "pandora_heart")
   assert(detail_ok and detail.variants[1].id == "heartneck")
   local purchase_ok, purchase = shop:buy("73", "730", "73001", "heartneck", 1)
@@ -127,10 +127,14 @@ test("retail variant purchase is atomic, idempotent, guild-scoped, and keeps its
   assert(state.journal[#state.journal].price_snapshot.checked_at == "2026-11-05")
   local replay_ok, replay = shop:buy("73", "730", "73001", "heartneck", 1)
   assert(replay_ok and replay.wallet == purchase.wallet and state.accounts["730"].wallet == purchase.wallet)
+  local ring_ok, ring_purchase = shop:buy("73", "730", "73002", "ring56", 1)
+  assert(ring_ok and ring_purchase.variant == "EU 56" and ring_purchase.price_each == 20571
+    and ring_purchase.price_snapshot.eu_cents == 6900 and ring_purchase.price_snapshot.us_cents == 9800)
+  assert(state.molly_v2.inventory.items["730"].ring56 == 1)
   local conflict, reason = shop:buy("73", "730", "73001", "rainbowneck", 1)
-  assert(not conflict and reason == "replay_conflict" and state.accounts["730"].wallet == purchase.wallet)
+  assert(not conflict and reason == "replay_conflict" and state.accounts["730"].wallet == ring_purchase.wallet)
   local inventory_ok, inventory_value = inventory:get("73", "730")
-  assert(inventory_ok and inventory_value.items.heartneck == 1)
+  assert(inventory_ok and inventory_value.items.heartneck == 1 and inventory_value.items.ring56 == 1)
   local other_ok, other_balance = ledger:balance("74", "730")
   assert(other_ok and other_balance.wallet == 0, "retail purchase state must remain isolated by guild")
 end)
@@ -283,17 +287,20 @@ test("retail variants can be equipped in separate clothing and jewelry slots", f
   local data = { guild = "75", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1 }
   assert(InventoryData.add(data, "750", "define6", 1))
   assert(InventoryData.add(data, "750", "heartneck", 1))
+  assert(InventoryData.add(data, "750", "ring56", 1))
   assert(InventoryData.add(data, "750", "bracelet16", 1))
   store.data["75"] = data
   local ok, result = fashion:equip("75", "750", "define6")
   assert(ok and result.slot == "outfit")
   ok, result = fashion:equip("75", "750", "heartneck")
   assert(ok and result.slot == "necklace")
+  ok, result = fashion:equip("75", "750", "ring56")
+  assert(ok and result.slot == "ring")
   ok, result = fashion:equip("75", "750", "bracelet16")
   assert(ok and result.slot == "bracelet")
   local found, value = inventory:get("75", "750")
   assert(found and value.equipped.outfit == "define6" and value.equipped.necklace == "heartneck"
-    and value.equipped.bracelet == "bracelet16")
+    and value.equipped.ring == "ring56" and value.equipped.bracelet == "bracelet16")
 end)
 
 test("ledger replays compare complete operation fingerprints before changing balances or inventory", function()
