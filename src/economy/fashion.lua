@@ -13,9 +13,6 @@ end
 
 function Fashion:_mode(guild)
   if not Store.valid_id(guild) then return false, "invalid_guild" end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
-  if mode.fashion ~= "inventory" then return false, "virtual_mode" end
   return true
 end
 
