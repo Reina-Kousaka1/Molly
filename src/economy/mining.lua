@@ -13,9 +13,6 @@ function Mining:mine(guild, user, request_id, request_type)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not Store.valid_id(request_id) then
     return false, "invalid_argument"
   end
-  local ok, mode = self.modes:get(guild)
-  if not ok then return false, mode end
-  if not mode.mining then return false, "mode_unavailable" end
   return self.ledger:mine(guild, user, request_id, request_type)
 end
 
