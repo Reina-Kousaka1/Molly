@@ -469,7 +469,7 @@ test("Sephora receipts migrate, rotate at 5,000, and remain replay-safe through 
   local function sephora_data(guild)
     return { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
       molly_v2 = { schema_version = 1, settings = { guild = { mode = "sephora" } },
-        inventory = { items = { ["7"] = { rose_glow = 1 } }, equipped = {} },
+        inventory = { items = { ["7"] = { rose_glow = 1, citrus_satin = 1 } }, equipped = {} },
         sephora = { fittings = {}, receipts = {} } } }
   end
   local state = { data = { ["92"] = sephora_data("92") } }
