@@ -1,5 +1,6 @@
 local Store = require("src.persistence.guild_store")
 local V2 = require("src.persistence.guild_v2")
+local InventoryData = require("src.economy.inventory_data")
 local ReceiptWindow = require("src.persistence.receipt_window")
 
 local Sephora = {}
@@ -42,6 +43,9 @@ function Sephora:try_on(guild, user, look_id, request_id)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not self:is_look(look_id)
     or not Store.valid_id(request_id) then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
+    local inventory, inventory_reason = InventoryData.get(data, user)
+    if not inventory then return false, inventory_reason end
+    if (inventory.items[look_id] or 0) < 1 then return false, "not_owned" end
     local section, reason = V2.ensure_section(data, "sephora")
     if not section then return false, reason end
     section.fittings = section.fittings or {}
@@ -92,8 +96,6 @@ end
 function Sephora:clear(guild, user)
   if not Store.valid_id(guild) or not Store.valid_id(user) then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
-    local enabled, reason = active(data)
-    if not enabled then return false, reason end
     local section, read_reason = V2.read_section(data, "sephora")
     if not section then return false, read_reason end
     local fittings = section.fittings or {}
