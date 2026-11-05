@@ -71,11 +71,11 @@ function Shop:buy(guild, user, request_id, item_id, quantity, request_type)
     return true, result
   end
   if mode.commerce ~= "ledger" then return false, "invalid_mode" end
+  local item = Catalog.get(item_id)
+  if not item then return false, self.sephora:is_look(item_id) and "virtual_mode" or "unknown_item" end
   local enabled, config = self.settings:get_domain(guild, "shop")
   if not enabled then return false, config end
   if not config.enabled then return false, "shop_disabled" end
-  local item = Catalog.get(item_id)
-  if not item then return false, self.sephora:is_look(item_id) and "virtual_mode" or "unknown_item" end
   local bought, result = self.ledger:purchase(guild, user, request_id, item.id, item.price, quantity, request_type)
   if not bought then return false, result end
   result.mode, result.name, result.price_each, result.charged = "standard", item.name, item.price, result.amount
