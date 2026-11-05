@@ -38,15 +38,6 @@ function Sephora:is_look(id)
   return type(id) == "string" and LOOKS[id] ~= nil
 end
 
-local function active(data)
-  local root, reason = V2.read(data)
-  if not root then return false, reason end
-  local settings = root.settings
-  local guild = type(settings) == "table" and settings.guild or nil
-  if type(guild) ~= "table" or (guild.mode or "standard") ~= "sephora" then return false, "mode_inactive" end
-  return true
-end
-
 function Sephora:try_on(guild, user, look_id, request_id)
   if not Store.valid_id(guild) or not Store.valid_id(user) or not self:is_look(look_id)
     or not Store.valid_id(request_id) then return false, "invalid_argument" end
@@ -69,8 +60,6 @@ function Sephora:try_on(guild, user, look_id, request_id)
     elseif receipt_status == "invalid_store" then
       return false, "invalid_store"
     end
-    local enabled, mode_reason = active(data)
-    if not enabled then return false, mode_reason end
     if section.fittings[user] == nil then
       local count = 0; for _ in pairs(section.fittings) do count = count + 1 end
       if count >= MAX_USERS then return false, "capacity" end
@@ -87,8 +76,6 @@ end
 function Sephora:get(guild, user)
   if not Store.valid_id(guild) or not Store.valid_id(user) then return false, "invalid_argument" end
   return self.store:run(guild, function(data)
-    local enabled, reason = active(data)
-    if not enabled then return false, reason end
     local section, read_reason = V2.read_section(data, "sephora")
     if not section then return false, read_reason end
     local fittings = section.fittings or {}
