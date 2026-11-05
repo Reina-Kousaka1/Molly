@@ -9,11 +9,13 @@ PYTHON_BIN=${PYTHON_BIN:-python3}
 "$LUAC_BIN" -p molly.lua
 find src tests -type f -name '*.lua' -exec "$LUAC_BIN" -p {} +
 
+test_status=0
 for suite in \
   tests/test.lua \
   tests/seaworld_driver.lua \
   tests/developer_lifecycle.lua \
   tests/v2.lua \
+  tests/personality_engine.lua \
   tests/community.lua \
   tests/economy_v2.lua \
   tests/observability.lua \
@@ -22,10 +24,10 @@ for suite in \
   tests/sprint.lua \
   tests/economy_commands.lua \
   tests/prefix_commands.lua \
-  tests/personality_engine.lua \
   tests/embeds.lua
 do
-  "$LUA_BIN" "$suite"
+  if ! "$LUA_BIN" "$suite"; then test_status=1; fi
 done
-"$LUA_BIN" tests/stress.lua
-"$PYTHON_BIN" tests/lavalink_env_transfer.py
+if ! "$LUA_BIN" tests/stress.lua; then test_status=1; fi
+if ! "$PYTHON_BIN" tests/lavalink_env_transfer.py; then test_status=1; fi
+exit "$test_status"
