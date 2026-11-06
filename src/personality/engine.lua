@@ -1,5 +1,6 @@
 local Store = require("src.persistence.guild_store")
 local V2 = require("src.persistence.guild_v2")
+local ReceiptWindow = require("src.persistence.receipt_window")
 
 local Engine = {}
 Engine.__index = Engine
@@ -14,6 +15,9 @@ local TOPICS = {
   shopping = { "shopping", "new drop", "new collection", "haul", "buy it", "need it", "wishlist" },
 }
 local MAX_EVENT_IDS, MAX_RUNTIME_GUILDS = 128, 300
+local EVENT_WINDOW = { map = "message_receipts", order = "message_order", count = "message_count",
+  head = "message_head", tail = "message_tail", watermark = "message_watermark",
+  migrated = "message_window_v1", limit = MAX_EVENT_IDS }
 local RECOVERY_SECONDS, RAMP_SECONDS = 900, 900
 local CONVERSATION_WINDOW, GUILD_COOLDOWN, CHANNEL_COOLDOWN, USER_COOLDOWN = 90, 90, 120, 900
 local MAX_FOMO_PER_WINDOW, FOMO_WINDOW_SECONDS = 12, 900
@@ -64,6 +68,8 @@ local function default_state()
     fomo_window_started_at = 0,
     fomo_window_gain = 0,
     event_ids = {},
+    message_receipts = {}, message_order = {}, message_count = 0, message_head = 1, message_tail = 0,
+    message_watermark = "", message_window_v1 = false,
   }
 end
 
@@ -92,9 +98,31 @@ local function normalize_state(raw)
     local start = math.max(1, #raw.event_ids - MAX_EVENT_IDS + 1)
     for index = start, #raw.event_ids do
       local id = raw.event_ids[index]
-      if type(id) == "string" and #id <= 24 then state.event_ids[#state.event_ids + 1] = id end
+      if ReceiptWindow.valid_id(id) then state.event_ids[#state.event_ids + 1] = id end
     end
   end
+  if raw.message_receipts ~= nil then state.message_receipts = raw.message_receipts end
+  if raw.message_order ~= nil then state.message_order = raw.message_order end
+  if raw.message_count ~= nil then state.message_count = raw.message_count end
+  if raw.message_head ~= nil then state.message_head = raw.message_head end
+  if raw.message_tail ~= nil then state.message_tail = raw.message_tail end
+  if raw.message_watermark ~= nil then state.message_watermark = raw.message_watermark end
+  if raw.message_window_v1 ~= nil then state.message_window_v1 = raw.message_window_v1 end
+  if state.message_window_v1 ~= true then
+    if type(state.message_receipts) ~= "table" then return nil, "invalid_event_state" end
+    for _, id in ipairs(state.event_ids) do
+      if state.message_receipts[id] == nil then state.message_receipts[id] = { processed = true } end
+    end
+    if state.message_watermark == "" and #state.event_ids >= MAX_EVENT_IDS then
+      local oldest
+      for _, id in ipairs(state.event_ids) do
+        if not oldest or ReceiptWindow.compare_ids(id, oldest) < 0 then oldest = id end
+      end
+      state.message_watermark = oldest or ""
+    end
+  end
+  local window_ok = ReceiptWindow.prepare(state, EVENT_WINDOW)
+  if window_ok == nil then return nil, "invalid_event_state" end
   return state
 end
 
@@ -112,7 +140,66 @@ local function write_state(raw, state)
   raw.fomo_window_started_at = state.fomo_window_started_at
   raw.fomo_window_gain = state.fomo_window_gain
   raw.event_ids = state.event_ids
+  raw.message_receipts = state.message_receipts
+  raw.message_order = state.message_order
+  raw.message_count = state.message_count
+  raw.message_head = state.message_head
+  raw.message_tail = state.message_tail
+  raw.message_watermark = state.message_watermark
+  raw.message_window_v1 = state.message_window_v1
   raw.updated_at = state.last_evolved_at
+end
+
+local function safe_failure(value)
+  local fields = {}
+  if type(value) == "table" then
+    local status = value.status_code or value.status
+    if type(status) == "number" and status % 1 == 0 and status >= 100 and status <= 599 then
+      fields.http_status = status
+    end
+    local code = value.code
+    if type(code) == "number" and code % 1 == 0 and code >= 0 and code <= 9999999999 then
+      fields.error_code = tostring(code)
+    elseif type(code) == "string" and #code <= 10 and code:match("^%d+$") then
+      fields.error_code = code
+    end
+    if fields.http_status == 403 or fields.error_code == "50013" then fields.detail = "permission_denied"
+    elseif fields.http_status == 429 then fields.detail = "rate_limited"
+    elseif fields.http_status == 404 or fields.error_code == "10003" then fields.detail = "channel_unavailable"
+    else fields.detail = "structured_error" end
+    return fields
+  end
+  local text = type(value) == "string" and value:lower() or ""
+  if text:find("permission", 1, true) or text:find("forbidden", 1, true)
+    or text:find("403", 1, true) or text:find("50013", 1, true) then
+    fields.detail = "permission_denied"
+  elseif text:find("rate limit", 1, true) or text:find("429", 1, true) then
+    fields.detail = "rate_limited"
+  elseif text:find("unknown channel", 1, true) or text:find("10003", 1, true) then
+    fields.detail = "channel_unavailable"
+  elseif text:find("timeout", 1, true) then
+    fields.detail = "timeout"
+  elseif text:find("attempt to index", 1, true) then
+    fields.detail = "attempt_to_index"
+  elseif text:find("attempt to call", 1, true) then
+    fields.detail = "attempt_to_call"
+  elseif text:find("bad argument", 1, true) then
+    fields.detail = "bad_argument"
+  else
+    fields.detail = "unclassified_error"
+  end
+  return fields
+end
+
+local function safe_persistence_reason(value)
+  local allowed = { busy = true, invalid_store = true, outcome_unknown = true,
+    resource_limit = true, serialization_failed = true, unavailable = true,
+    invalid_event_state = true, unsupported_schema = true }
+  return type(value) == "string" and allowed[value] and value or "persistence_failure"
+end
+
+local function log_failure(logger, event, fields)
+  if logger and type(logger.warn) == "function" then pcall(logger.warn, logger, event, fields) end
 end
 
 local function choose_topic(random, current, interests)
@@ -349,7 +436,11 @@ function Engine:handle_message(message)
   for _ in pairs(room.users) do people = people + 1 end
 
   local ok, result = self:_mutate(guild, function(state)
-    for _, id in ipairs(state.event_ids) do if id == message.id then return false, "duplicate_event" end end
+    local event_status = ReceiptWindow.lookup(state, EVENT_WINDOW, message.id)
+    if event_status == "retained" or event_status == "expired" then return false, "duplicate_event" end
+    if event_status ~= "new" then return false, "invalid_event_state" end
+    local recorded, record_reason = ReceiptWindow.add(state, EVENT_WINDOW, message.id, { processed = true })
+    if not recorded then return false, record_reason == "replay_expired" and "duplicate_event" or "invalid_event_state" end
     state.event_ids[#state.event_ids + 1] = message.id
     while #state.event_ids > MAX_EVENT_IDS do table.remove(state.event_ids, 1) end
     evolve(state, now, self.timezone_offset_minutes, self.random)
@@ -388,16 +479,26 @@ function Engine:handle_message(message)
     return true, { reply = nil, topic = topic, fomo = state.values.fomo, ego = state.values.ego }
   end)
   if not ok then
-    if self.logger then self.logger:warn("personality_persistence_unavailable", { guild_id = guild, detail = "state_not_updated" }) end
+    if result == "duplicate_event" then return false, result end
+    local event = (result == "invalid_event_state" or result == "unsupported_schema")
+      and "personality_state_rejected" or "personality_persistence_unavailable"
+    log_failure(self.logger, event, { guild_id = guild, detail = safe_persistence_reason(result) })
     return false, result
   end
   if result.reply then
-    local send_ok, accepted
-    if self.send then send_ok, accepted = pcall(self.send, channel, result.reply)
-    elseif self.reply then send_ok, accepted = pcall(self.reply, message, result.reply)
-    elseif type(message.reply) == "function" then send_ok, accepted = pcall(message.reply, message, result.reply)
-    else send_ok, accepted = false, false end
-    if not send_ok or accepted == false or accepted == nil then return false, "send_failed" end
+    local send_ok, accepted, send_reason
+    if self.send then send_ok, accepted, send_reason = pcall(self.send, channel, result.reply)
+    elseif self.reply then send_ok, accepted, send_reason = pcall(self.reply, message, result.reply)
+    elseif type(message.reply) == "function" then send_ok, accepted, send_reason = pcall(message.reply, message, result.reply)
+    else send_ok, accepted, send_reason = false, false, "sender_unavailable" end
+    if not send_ok or accepted == false or accepted == nil then
+      local fields = { guild_id = guild, channel_id = channel,
+        delivery = not send_ok and "exception" or accepted == false and "rejected" or "empty_response" }
+      local diagnostics = safe_failure(not send_ok and accepted or send_reason)
+      for key, value in pairs(diagnostics) do fields[key] = value end
+      log_failure(self.logger, "personality_send_failed", fields)
+      return false, "send_failed"
+    end
     runtime.channels[channel] = now
     runtime.users["response:" .. message.author.id] = now
   end
@@ -451,8 +552,11 @@ function Engine:register(bot)
   if self.registered then return false, "already_registered" end
   if not bot or type(bot.on_message) ~= "function" then return false, "message_event_unavailable" end
   local ok = pcall(bot.on_message, bot, function(message)
-    local handled_ok = pcall(self.observe, self, message)
-    if not handled_ok and self.logger then self.logger:warn("personality_handler_failed", { detail = "handler_error" }) end
+    local handled_ok, failure = pcall(self.observe, self, message)
+    if not handled_ok then
+      local diagnostics = safe_failure(failure)
+      log_failure(self.logger, "personality_handler_failed", diagnostics)
+    end
   end)
   if not ok then return false, "message_event_unavailable" end
   self.registered = true

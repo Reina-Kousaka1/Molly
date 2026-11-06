@@ -148,6 +148,50 @@ test("failed Discord sends reserve cooldown and do not retry into a reply loop",
   assert(not engine:handle_message(bot_message) and sends == 1)
 end)
 
+test("Discord send failures log safe HTTP diagnostics without message or secret payloads", function()
+  local store, now, rows = make_store(), 585000, {}
+  local logger = { warn = function(_, name, fields) rows[#rows + 1] = { name = name, fields = fields } end }
+  local engine = Engine.new({ store = store, clock = function() return now end,
+    random = function(low) return low end, logger = logger,
+    send = function() error({ status_code = 403, code = 50013,
+      message = "token=fixture-secret private-message=lip gloss" }) end })
+  now = now + 2000
+  local ok, reason = engine:handle_message(message(1, 108, "new lip oil", "10", "20"))
+  assert(not ok and reason == "send_failed" and #rows == 1)
+  local row = rows[1]
+  assert(row.name == "personality_send_failed" and row.fields.guild_id == "10" and row.fields.channel_id == "20")
+  assert(row.fields.delivery == "exception" and row.fields.http_status == 403 and row.fields.error_code == "50013")
+  assert(not tostring(row.fields.message or ""):find("fixture-secret", 1, true))
+  assert(not tostring(row.fields.detail):find("private-message", 1, true))
+  assert(state_of(engine, "10").last_response_at == now, "failed sends still reserve the persisted cooldown")
+end)
+
+test("returned Discord permission failures get a safe diagnostic category", function()
+  local rows, now = {}, 590000
+  local engine = Engine.new({ store = make_store(), clock = function() return now end,
+    random = function(low) return low end,
+    logger = { warn = function(_, name, fields) rows[#rows + 1] = { name = name, fields = fields } end },
+    send = function() return nil, "missing send messages permission; token=fixture-secret" end })
+  now = now + 2000
+  local ok, reason = engine:handle_message(message(1, 108, "new lip oil", "10", "20"))
+  assert(not ok and reason == "send_failed" and #rows == 1)
+  assert(rows[1].fields.detail == "permission_denied")
+  assert(not tostring(rows[1].fields.detail):find("fixture-secret", 1, true))
+end)
+
+test("registered handler exceptions log a classified detail without the thrown payload", function()
+  local rows, listeners, bot_callback = {}, 0, nil
+  local engine = make_engine(make_store(), function() return 600000 end)
+  engine.logger = { warn = function(_, name, fields) rows[#rows + 1] = { name = name, fields = fields } end }
+  engine.observe = function() error("attempt to index private-message token=fixture-secret") end
+  local bot = { on_message = function(_, callback) listeners = listeners + 1; bot_callback = callback end }
+  assert(engine:register(bot) and listeners == 1)
+  bot_callback(message(1, 108, "new lip oil", "10", "20"))
+  assert(#rows == 1 and rows[1].name == "personality_handler_failed")
+  assert(rows[1].fields.detail == "attempt_to_index")
+  assert(not tostring(rows[1].fields.detail):find("fixture-secret", 1, true))
+end)
+
 test("status self-praise is user-triggered, bounded, and needs active presence", function()
   local store, now = make_store(), 600000
   local engine = make_engine(store, function() return now end)
@@ -275,14 +319,48 @@ test("personality UTC offset is optional, validated, and configurable", function
   assert(default.personality.utc_offset_minutes == 0)
 end)
 
-test("persistent message-ID ring stays bounded under a burst", function()
+test("persistent message replay watermark survives retention and restart", function()
   local store, now = make_store(), 1200000
   local engine = make_engine(store, function() return now end)
   for id = 1, 180 do
     now = now + 9
     engine:handle_message(message(id, 300 + id, "lip oil topic " .. id, "10", "20"))
   end
-  assert(#state_of(engine, "10").event_ids == 128)
+  local state = state_of(engine, "10")
+  assert(#state.event_ids == 128 and state.message_count == 128)
+  assert(state.message_watermark == "52")
+  local commits, fomo = store.commits, state.values.fomo
+  assert(not engine:handle_message(message(1, 301, "lip oil topic 1", "10", "20")))
+  assert(store.commits == commits and state_of(engine, "10").values.fomo == fomo)
+  local restarted = make_engine(store, function() return now + 2000 end)
+  assert(not restarted:handle_message(message(1, 301, "lip oil topic 1", "10", "20")))
+  assert(store.commits == commits and state_of(restarted, "10").values.fomo == fomo)
+end)
+
+test("message IDs above 2^53 are ordered as decimal strings for permanent expiry", function()
+  local store, now = make_store(), 1250000
+  local engine = make_engine(store, function() return now end)
+  for index = 0, 128 do
+    now = now + 9
+    local id = "90071992547409" .. string.format("%05d", index)
+    assert(engine:handle_message(message(id, 500 + index, "lip oil topic " .. index, "10", "20")))
+  end
+  local state = state_of(engine, "10")
+  assert(state.message_watermark == "9007199254740900000")
+  local commits = store.commits
+  assert(not engine:handle_message(message("9007199254740900000", 500, "lip oil topic 0", "10", "20")))
+  assert(store.commits == commits)
+end)
+
+test("legacy bounded event IDs migrate into a replay-safe watermark", function()
+  local store = make_store()
+  local ids = {}
+  for id = 1, 128 do ids[id] = tostring(id) end
+  store.data["10"] = { molly_v2 = { schema_version = 1,
+    personality = { version = 1, event_ids = ids } } }
+  local state = state_of(make_engine(store, function() return 1300000 end), "10")
+  assert(state.message_count == 128 and state.message_watermark == "1")
+  assert(state.message_receipts["1"] and state.message_receipts["128"])
 end)
 
 test("ephemeral flood maps stay capped even when timestamps are identical", function()
