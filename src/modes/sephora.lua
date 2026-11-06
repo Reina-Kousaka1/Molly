@@ -45,7 +45,6 @@ function Sephora:try_on(guild, user, look_id, request_id)
   return self.store:run(guild, function(data)
     local inventory, inventory_reason = InventoryData.get(data, user)
     if not inventory then return false, inventory_reason end
-    if (inventory.items[look_id] or 0) < 1 then return false, "not_owned" end
     local section, reason = V2.ensure_section(data, "sephora")
     if not section then return false, reason end
     section.fittings = section.fittings or {}
@@ -64,6 +63,9 @@ function Sephora:try_on(guild, user, look_id, request_id)
     elseif receipt_status == "invalid_store" then
       return false, "invalid_store"
     end
+    -- A retained request ID must be resolved before checking current ownership:
+    -- a retry still refers to its original operation even if inventory changed.
+    if (inventory.items[look_id] or 0) < 1 then return false, "not_owned" end
     if section.fittings[user] == nil then
       local count = 0; for _ in pairs(section.fittings) do count = count + 1 end
       if count >= MAX_USERS then return false, "capacity" end

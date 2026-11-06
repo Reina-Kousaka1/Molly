@@ -9,6 +9,7 @@ local Ledger = require("src.economy.ledger")
 local Inventory = require("src.economy.inventory")
 local InventoryData = require("src.economy.inventory_data")
 local Shop = require("src.economy.shop")
+local Catalog = require("src.economy.catalog")
 local Mining = require("src.economy.mining")
 local Fashion = require("src.economy.fashion")
 local Schema = require("src.settings.schema")
@@ -433,7 +434,7 @@ test("mining rejects invalid and non-finite clock state", function()
   assert(not ok and reason == "invalid_store")
 end)
 
-test("fashion is guild-isolated, requires ownership, and enforces the selected server mode", function()
+test("fashion and paid looks are guild-isolated, ownership-gated, and replay-safe", function()
   local ok, result = ledger:change("10", "201", "501", "weekly")
   assert(ok and result.wallet == 500)
   ok, result = shop:buy("10", "201", "502", "rose_crown", 1)
@@ -446,30 +447,47 @@ test("fashion is guild-isolated, requires ownership, and enforces the selected s
   assert(other and empty.equipped.head == nil and empty.items.rose_crown == nil)
   assert(modes:set("20", "sephora"))
   local no_fashion, reason = fashion:equip("20", "201", "rose_crown")
-  assert(not no_fashion and reason == "virtual_mode")
+  assert(not no_fashion and reason == "not_owned", "another guild's purchase must not grant ownership")
+  local disabled, disabled_reason = shop:list("20")
+  assert(not disabled and disabled_reason == "shop_disabled")
+  assert(shop:set_enabled("20", true))
   local shop_ok, book = shop:list("20")
-  assert(shop_ok and book.mode == "sephora" and #book.items == 4)
-  local account_before = store.data["20"] and store.data["20"].accounts["201"]
+  assert(shop_ok and book.mode == "kiddy" and #book.items == #Catalog.list())
+  local unfunded, unfunded_reason = shop:buy("20", "201", "503", "rose_glow", 1)
+  assert(not unfunded and unfunded_reason == "insufficient")
+  local earned, balance = ledger:change("20", "201", "504", "weekly")
+  assert(earned and balance.wallet == 500)
   local selected, look = shop:buy("20", "201", "503", "rose_glow", 1)
-  assert(selected and look.charged == 0 and look.mode == "sephora")
-  assert((store.data["20"] and store.data["20"].accounts["201"]) == account_before,
-    "virtual Sephora must not touch the coin ledger")
+  assert(selected and look.charged == Catalog.get("rose_glow").price and look.wallet == 150)
+  local fitting_selected, fitting_value = sephora:try_on("20", "201", "rose_glow", "506")
+  assert(fitting_selected and fitting_value.look_id == "rose_glow")
   local fitting_ok, fitting = sephora:get("20", "201")
   assert(fitting_ok and fitting.look_id == "rose_glow")
-  local conflict, conflict_reason = sephora:try_on("20", "201", "citrus_satin", "503")
+  local removed = store:run("20", function(data)
+    assert(InventoryData.remove(data, "201", "rose_glow", 1))
+    return true, true, true
+  end)
+  assert(removed)
+  local replayed, replay = sephora:try_on("20", "201", "rose_glow", "506")
+  assert(replayed and replay.replayed, "a retained retry must survive an ownership change")
+  local conflict, conflict_reason = sephora:try_on("20", "201", "citrus_satin", "506")
   assert(not conflict and conflict_reason == "replay_conflict")
   assert(modes:set("20", "standard"))
-  local disabled, reason = shop:list("20")
+  assert(shop:set_enabled("20", false))
+  disabled, reason = shop:list("20")
   assert(not disabled and reason == "shop_disabled")
   local unavailable, mode_reason = shop:buy("20", "201", "505", "citrus_satin", 1)
-  assert(not unavailable and mode_reason == "virtual_mode")
+  assert(not unavailable and mode_reason == "shop_disabled")
 end)
 
 test("Sephora receipts migrate, rotate at 5,000, and remain replay-safe through 10,000 requests", function()
   local function sephora_data(guild)
-    return { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
+    local data = { guild = guild, accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {}, next_case = 1,
       molly_v2 = { schema_version = 1, settings = { guild = { mode = "sephora" } },
         sephora = { fittings = {}, receipts = {} } } }
+    assert(InventoryData.add(data, "7", "rose_glow", 1))
+    assert(InventoryData.add(data, "7", "citrus_satin", 1))
+    return data
   end
   local state = { data = { ["92"] = sephora_data("92") } }
   function state:run(guild, fn)
@@ -572,7 +590,8 @@ test("V2 command modules register safe guild/user-facing slash definitions", fun
   assert(router.commands.mode.permission == "manage_guild" and router.commands.content.permission == "manage_guild")
   assert(not router.commands.shop.admin and not router.commands["user-settings"].admin)
   local shop_options = router.commands.shop.options
-  assert(#shop_options == 6 and shop_options[1].name == "status" and shop_options[6].name == "disable")
+  assert(#shop_options == 10 and shop_options[1].name == "status" and shop_options[6].name == "clearlook"
+    and shop_options[7].name == "buy" and shop_options[10].name == "disable")
   local options = router.commands["user-settings"].options
   assert(#options == 6 and options[1].name == "show")
 end)
