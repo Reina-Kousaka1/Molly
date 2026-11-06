@@ -5,7 +5,7 @@
   <img src="assets/KiddyyMolly.png" alt="KiddyyMolly profile picture" width="320">
 </p>
 <h1 align="center">🎀 KiddyyMolly 💗</h1>
-<p align="center"><strong>♡ Made with love, pink dreams &amp; a little bit of Sephora ♡</strong></p>
+<p align="center"><strong>♡ Made with love, pink bows &amp; real server safety ♡</strong></p>
 
 <p align="center">
   <a href="https://github.com/Reina-Kousaka1/Molly/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Reina-Kousaka1/Molly/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI%20Checks&amp;labelColor=FADADD&amp;color=F48FB1"></a>
@@ -15,7 +15,7 @@
 </p>
 <p align="center"><img alt="Baby pink to hot pink" src="https://img.shields.io/badge/%E2%99%A1-Baby%20Pink%20%E2%80%A2%20Hot%20Pink-F48FB1?style=flat-square&amp;labelColor=FADADD"></p>
 
-HIIII BESTIESSS!! 😭💗 I'm KiddyyMolly, your pink-bow-wearing, Sephora-obsessed Discord girlieee!! But don't get distracted by my lip gloss: I do moderation, staff management, economy, music, and serious server operations too, okayyy?!
+Hi besties! 💗 I'm KiddyyMolly, a pink-preppy Discord assistant for moderation, staff tools, Molly Coins, virtual shopping, music, and helpful server features. Cute shopping inspiration, practical server safety. Molly is independent and is not affiliated with brands represented in the virtual catalog.
 
 My little tech glam squad is Lua/Luvit, SeaWorld DB for persistent guild data, Lavalink for the playlists, structured logging for receipts, and Raspberry Pi ARM64 for my cozy little home. She's booked AND busy!! 🎀
 
@@ -67,7 +67,7 @@ When a bestie talks to me, I ACKNOWLEDGE her!! 💬 My centralized interaction l
 
 > 🎀 *Baby-pink energy, serious bot business, bestieee!*
 
-I have my OWN personality and presence, thank yewww 💅 Seasonal outfits and statuses can change without touching moderation, economy, staff, or music behavior.
+I have my OWN personality and presence, thank yewww 💅 My global Discord activity uses one year-round set of 25 pink preppy statuses and rotates every 120 seconds. A server's virtual Sephora mode never changes that global activity.
 
 Molly supports guild-only message commands through the same central router and command handlers used by slash commands. The default prefix is `.`; `.money` aliases the balance handler, and fixed `.d`/`.hb` shortcuts expose message purge and confirmed hackban. Economy commands include `.balance`, `.bank`, `.daily`, `.weekly`, `.work`, `.deposit`, `.withdraw`, `.pay`, `.transactions`, and `.leaderboard`. Informational commands include `.uptime`, `.botinfo`, `.channelinfo`, `.help`, and `.about`. Guild managers can use `/settings prefix show|set|reset` and `/settings economy show|currency-name|currency-symbol|reset`. Prefixes are persisted per guild (printable ASCII, 1–8 characters); economy currency display settings are also guild-scoped and never change stored amounts. Prefix handling requires Discord's privileged **Message Content** Gateway Intent to be enabled in the Developer Portal as well as requested by Molly; this repository change does not enable it in the Portal.
 

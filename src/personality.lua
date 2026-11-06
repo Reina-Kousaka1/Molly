@@ -37,7 +37,7 @@ function Personality.profile(timestamp)
 end
 
 function Personality.about(_timestamp)
-  return "Hiiii besties! I'm KiddyyMolly 🎀💗 Your pink, Sephora-loving Discord assistant for moderation, staff, economy, and music. Cute vibes, real server safety!"
+  return "Your pink little Discord bestie! 💗 From Molly Coins and fictional shopping adventures to moderation, music, and helpful server features, I bring a little sparkle while keeping server safety real."
 end
 
 return Personality

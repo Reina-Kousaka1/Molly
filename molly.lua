@@ -125,7 +125,7 @@ commands:set_gate(function(ctx)
   if not ok then return false, "access_unavailable" end
   return entry == nil, entry and "blacklisted" or nil
 end)
-SmokeCommands.register(commands, app, { clock = function() return uv.now() end })
+SmokeCommands.register(commands, app, { clock = function() return uv.now() end, version = config.build.version })
 InformationCommands.register(commands, app)
 EconomyCommands.register(commands, ledger, { logger = logger, settings = guild_settings })
 ShopCommands.register(commands, shop, guild_settings)

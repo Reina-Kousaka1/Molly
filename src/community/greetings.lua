@@ -1,5 +1,6 @@
 local Store = require("src.persistence.guild_store")
 local Schema = require("src.settings.schema")
+local Embeds = require("src.discord.embeds")
 
 local Greetings = {}
 Greetings.__index = Greetings
@@ -95,7 +96,7 @@ function Greetings:_payload(domain, config, guild_id, member, count, server_name
     local default_title = domain == "welcome" and "Welcome" or "Goodbye"
     local title = config.embed.title ~= "" and render(config.embed.title, values) or default_title
     local description = config.embed.description ~= "" and render(config.embed.description, values) or content
-    payload.embeds = { { title = safe(title, 256), description = safe(description, 4000), color = 0xD46AA6 } }
+    payload.embeds = { Embeds.create("info", safe(title, 256), safe(description, 4000)) }
     if content == "" then payload.content = nil end
   end
   return payload
