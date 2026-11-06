@@ -14,6 +14,11 @@ local function equal(actual, expected)
 end
 
 test("embed palette and core response categories are centralized", function()
+  equal(Embeds.palette.primary_pink, 0xF8BBD0)
+  equal(Embeds.palette.soft_rose, 0xF48FB1)
+  equal(Embeds.palette.lavender, 0xD8B4FE)
+  equal(Embeds.palette.cream, 0xFFF1F5)
+  equal(Embeds.palette.error_rose, 0xE57373)
   for _, kind in ipairs({ "success", "error", "warning", "info", "moderation", "economy", "music", "voice", "system" }) do
     local embed = Embeds.create(kind, "Test", "Details")
     assert(embed.color == Embeds.colors[kind])
@@ -21,6 +26,57 @@ test("embed palette and core response categories are centralized", function()
     equal(embed.author.name, "KiddyyMolly 🎀")
     assert(embed.footer.text:find("KiddyyMolly", 1, true))
   end
+end)
+
+test("about command renders verified features, build version, and the brand disclaimer", function()
+  local Router = require("src.commands.router")
+  local Smoke = require("src.commands.smoke")
+  local router, called = Router.new(), nil
+  Smoke.register(router, {}, { version = "1.2-test" })
+  local ctx = { respond = function(_, content, options) called = { content = content, options = options }; return true end }
+  ctx._molly_category, ctx._molly_command_name = "Information", "about"
+  Response.decorate(ctx)
+  assert(router:dispatch("about", ctx))
+  assert(called and called.content == nil and #called.options.embeds == 1)
+  local embed = called.options.embeds[1]
+  equal(embed.title, "KiddyyMolly 🎀")
+  equal(embed.color, Embeds.palette.primary_pink)
+  assert(embed.description:find("Your pink little Discord bestie", 1, true))
+  local fields = {}
+  for _, field in ipairs(embed.fields) do fields[field.name] = field.value end
+  assert(fields["Molly Coins & shopping 💗"]:find("fictional", 1, true))
+  assert(fields["Molly Coins & shopping 💗"]:find("not affiliated", 1, true))
+  assert(fields["Version & runtime 🛠️"]:find("1.2-test", 1, true))
+  assert(fields["Project 📎"]:find("AGPL-3.0", 1, true))
+  assert(#embed.fields <= 25 and #embed.title <= 256 and #embed.description <= 4096)
+  local aggregate = #embed.title + #embed.description + #embed.author.name + #embed.footer.text
+  for _, field in ipairs(embed.fields) do
+    assert(#field.name <= 256 and #field.value <= 1024)
+    aggregate = aggregate + #field.name + #field.value
+  end
+  assert(aggregate <= 6000)
+end)
+
+test("shop, inventory, and economy responses use readable Molly titles", function()
+  equal(Embeds.for_command("Economy", "shop", "Shop contents")[1].title, "KiddyyMolly's Virtual Shop 🛍️")
+  equal(Embeds.for_command("Economy", "inventory", "Your items")[1].title, "Your Molly Closet 🎀")
+  equal(Embeds.for_command("Economy", "balance", "Wallet: 12 coins")[1].title, "Molly Coins 💗")
+end)
+
+test("help keeps registered command grouping and accurate virtual shop wording", function()
+  local Router = require("src.commands.router")
+  local Information = require("src.commands.information")
+  local router, called = Router.new(), nil
+  router:register({ name = "daily", category = "Economy", description = "Claim a daily reward", execute = function() end })
+  Information.register(router, {})
+  local ctx = { respond = function(_, content, options) called = { content = content, options = options }; return true end }
+  ctx._molly_category, ctx._molly_command_name = "Utility", "help"
+  Response.decorate(ctx)
+  assert(router:dispatch("help", ctx))
+  local description = called.options.embeds[1].description
+  assert(description:find("/daily", 1, true))
+  assert(description:find("Sephora virtual looks are free", 1, true))
+  assert(description:find("not affiliated", 1, true))
 end)
 
 test("command output gets a category embed and readable severity", function()

@@ -116,6 +116,9 @@ test("greeting templates use bounded variables, private previews, and isolated c
   assert(settings:update_domain("1", "welcome", function(value) value.embed.enabled = true; value.embed.title = "Welcome {user}"; return true end))
   ok, payload = greetings:preview("1", "welcome", { user = { id = "12", username = "Preview" } })
   assert(ok and payload.embeds[1].title == "Welcome Preview")
+  assert(payload.embeds[1].color == require("src.discord.embeds").colors.info)
+  assert(payload.embeds[1].author.name == "KiddyyMolly 🎀")
+  assert(payload.embeds[1].footer.text:find("server safety", 1, true))
 end)
 
 test("action logs honor per-guild event settings and suppress mentions", function()

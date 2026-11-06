@@ -2,6 +2,15 @@ local Smoke = {}
 local Response = require("src.discord.response")
 local Personality = require("src.personality")
 
+local function runtime_label()
+  local parts = { _VERSION or "Lua runtime unavailable" }
+  local jit_runtime = rawget(_G, "jit")
+  if type(jit_runtime) == "table" and type(jit_runtime.version) == "string" then
+    parts[#parts + 1] = jit_runtime.version
+  end
+  return table.concat(parts, " · ")
+end
+
 local function clock_ms(clock)
   if type(clock) == "function" then
     local value = clock()
@@ -34,10 +43,25 @@ function Smoke.register(router, app, options)
 
   router:register({
     name = "about",
-    description = "Shows Molly bootstrap information",
+    category = "Information",
+    description = "Meet KiddyyMolly and see what she can do",
     prefix = { arguments = {} },
     execute = function(context)
-      context:respond(Personality.about())
+      local version = tostring(options.version or "1.2"):sub(1, 32)
+      local description = Personality.about()
+      Response.set_embed(context, {
+        kind = "info",
+        title = "KiddyyMolly 🎀",
+        description = description,
+        fields = {
+          { name = "What I do ✨", value = "Moderation and server administration · staff tools · welcome, AFK, logs, roles, and voice rooms" },
+          { name = "Molly Coins & shopping 💗", value = "Earn and manage in-server Molly Coins, browse the virtual shop, and manage inventory and fashion. Retail catalog entries are fictional; Molly is independent and not affiliated with Sephora, lululemon, Pandora, or other brands. No real goods or purchases are offered." },
+          { name = "Music 🎧", value = "Lavalink-powered playback, queues, and music controls when the configured music service is available." },
+          { name = "Version & runtime 🛠️", value = "Molly " .. version .. " · " .. runtime_label() },
+          { name = "Project 📎", value = "Open-source project · AGPL-3.0\nhttps://github.com/Reina-Kousaka1/Molly" },
+        },
+      })
+      context:respond(description)
     end,
   })
 

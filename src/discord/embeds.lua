@@ -1,15 +1,23 @@
 local Embeds = {}
 
+Embeds.palette = {
+  primary_pink = 0xF8BBD0,
+  soft_rose = 0xF48FB1,
+  lavender = 0xD8B4FE,
+  cream = 0xFFF1F5,
+  error_rose = 0xE57373,
+}
+
 Embeds.colors = {
-  success = 0xF48FB1,
-  error = 0xD85A8B,
-  warning = 0xE7A2B5,
-  info = 0xF8BBD0,
-  moderation = 0xEC86AD,
-  economy = 0xF4A6C5,
-  music = 0xF062A6,
-  voice = 0xF6A5CA,
-  system = 0xFADADD,
+  success = Embeds.palette.soft_rose,
+  error = Embeds.palette.error_rose,
+  warning = Embeds.palette.lavender,
+  info = Embeds.palette.primary_pink,
+  moderation = Embeds.palette.soft_rose,
+  economy = Embeds.palette.primary_pink,
+  music = Embeds.palette.lavender,
+  voice = Embeds.palette.soft_rose,
+  system = Embeds.palette.cream,
 }
 
 local category_kind = {
@@ -19,11 +27,15 @@ local category_kind = {
 }
 
 local titles = {
-  ping = "Pong", health = "KiddyyMolly Health", about = "About KiddyyMolly", uptime = "Uptime",
+  ping = "Pong", health = "KiddyyMolly Health", about = "KiddyyMolly 🎀", uptime = "Uptime",
   botinfo = "KiddyyMolly 🎀 · Bot Information", serverinfo = "Server Information", membercount = "Member Count",
   userinfo = "User Information", avatar = "Avatar", channelinfo = "Channel Information",
   roleinfo = "Role Information", roles = "Your Roles", permissions = "Permissions", help = "KiddyyMolly 🎀 Help",
-  ["music-panel"] = "Music Controls", voice = "Voice Rooms",
+  shop = "KiddyyMolly's Virtual Shop 🛍️", inventory = "Your Molly Closet 🎀", balance = "Molly Coins 💗",
+  bank = "Molly Bank 💸", daily = "Daily Coins ✨", weekly = "Weekly Coins ✨", work = "Molly Work 💼",
+  deposit = "Bank Deposit 💗", withdraw = "Bank Withdrawal 💗", pay = "Coin Transfer 💸",
+  transactions = "Coin History 🧾", transaction = "Coin Transaction 🧾", fashion = "Molly Fashion 🎀",
+  mining = "Molly Mining ⛏️", ["music-panel"] = "KiddyyMolly · Music Controls 🎀", voice = "Voice Rooms",
 }
 
 local function truncate(value, limit, suffix)
@@ -60,7 +72,7 @@ local function make(kind, title, description, options)
     author = { name = "KiddyyMolly 🎀" },
     title = truncate(title or "KiddyyMolly", 256),
     color = color,
-    footer = { text = "KiddyyMolly • Pink dreams & server safety 💗" },
+    footer = { text = "KiddyyMolly 🎀 · Cute vibes, real server safety 💗" },
   }
   if type(description) == "string" and description ~= "" then
     embed.description = truncate(description, 4096, "…")

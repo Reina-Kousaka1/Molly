@@ -115,7 +115,7 @@ function Panel:_payload(guild_id, state)
       { type = 2, style = 4, label = labels[8], custom_id = "molly_music:disconnect" },
     } },
   }
-  local payload = { content = "Molly's Music Room 🖤", embeds = { embed }, components = components }
+  local payload = { content = "KiddyyMolly's Music Room 🎀", embeds = { embed }, components = components }
   local signature = table.concat({ title, description, tostring(state and state.position and math.floor(state.position / 15000) or 0),
     tostring(state and #state.queue or 0), tostring(state and state.paused), tostring(state and state.volume),
     tostring(state and state.loop), tostring(state and state.voice_channel_id) }, "|")
@@ -149,7 +149,7 @@ function Panel:disable(guild_id)
   if not ok then return false, current end
   if current.channel_id and current.message_id and self.bot and self.bot.rest then
     pcall(self.bot.rest.edit_message, self.bot.rest, current.channel_id, current.message_id,
-      { content = "Molly's music controls are offline for now.", embeds = {}, components = {} })
+      { content = "KiddyyMolly's music controls are offline for now. 💗", embeds = {}, components = {} })
   end
   return self:_save(guild_id, {})
 end
