@@ -507,16 +507,16 @@ test("panel controls require the caller to share Molly's voice channel", functio
   equal(calls, 1); assert(denied)
 end)
 
-test("personality variants retain their required track information", function()
+test("year-round personality retains track and server information", function()
   for i = 1, 10 do
     local line = Personality.render("music_added", { title = "Track One" }, function() return i % 2 + 1 end)
     assert(line:find("Track One", 1, true))
   end
-  assert(Personality.about(1793314800):find("shoes", 1, true))
-  local standard = Personality.about(1793574000)
-  assert(standard:find("moderation", 1, true) and not standard:find("shoes", 1, true))
-  assert(Personality.profile(1793314800) == "succubus")
-  assert(Personality.profile(1793574000) == "default")
+  local first = Personality.about(1793314800)
+  local later = Personality.about(1793574000)
+  assert(first == later and first:find("moderation", 1, true) and first:find("music", 1, true))
+  assert(Personality.profile(1793314800) == "preppy")
+  assert(Personality.profile(1793574000) == "preppy")
 end)
 
 io.stdout:write(string.format("%d tests, %d failures\n", total, failed))
