@@ -13,6 +13,8 @@ local MusicAdapter = require("src.music.adapter")
 local LavalinkClient = require("src.music.lavalink_client")
 local SeaWorldConnector = require("src.persistence.seaworld_connector")
 local GuildStore = require("src.persistence.guild_store")
+local GlobalStore = require("src.persistence.global_store")
+local Ledger = require("src.economy.ledger")
 local Health = require("src.health")
 local Response = require("src.discord.response")
 
@@ -37,6 +39,15 @@ test("config validates without disclosing a token", function()
   assert(config == nil)
   equal(errors[1], "MOLLY_DISCORD_TOKEN")
   assert(not table.concat(errors, ","):find("fixture", 1, true))
+end)
+
+test("member events require explicit opt-in to the privileged Discord intent", function()
+  local config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x" }))
+  assert(config.discord.guild_members_intent == false)
+  config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_GUILD_MEMBERS_INTENT = "true" }))
+  assert(config.discord.guild_members_intent == true)
+  local invalid, errors = Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_GUILD_MEMBERS_INTENT = "maybe" })
+  assert(invalid == nil and errors[1] == "MOLLY_GUILD_MEMBERS_INTENT")
 end)
 
 test("config accepts namespaced SeaWorld configuration", function()
@@ -193,6 +204,39 @@ test("SeaWorld persistence connector reports unavailable transport and closes gr
   assert(closed)
 end)
 
+test("connector transaction reports unknown rollback and commit outcomes", function()
+  for _, scenario in ipairs({ "rollback_return", "rollback_raise", "commit_return", "commit_raise" }) do
+    local driver = { in_transaction = false, commits = 0, rollbacks = 0 }
+    function driver:health()
+      return { status = "healthy", api_version = "1.0.0",
+        capabilities = { native_queries = true, field_updates = true, transactions = true } }
+    end
+    function driver:operation() return true, {} end
+    function driver:begin() self.in_transaction = true; return true end
+    function driver:rollback()
+      self.rollbacks = self.rollbacks + 1
+      self.in_transaction = false
+      if scenario == "rollback_raise" then error("rollback reply lost") end
+      return false, "timeout"
+    end
+    function driver:commit()
+      self.commits = self.commits + 1
+      self.in_transaction = false
+      if scenario == "commit_raise" then error("commit reply lost") end
+      return false, "timeout"
+    end
+    local connector = SeaWorldConnector.new({ driver = driver })
+    local ok, reason = connector:transaction(function()
+      if scenario:match("^rollback") then return false, "aborted" end
+      return true, "committed"
+    end)
+    assert(not ok and reason == "outcome_unknown")
+    assert(not connector.in_transaction and not driver.in_transaction)
+    assert(driver.rollbacks == (scenario:match("^rollback") and 1 or 0))
+    assert(driver.commits == (scenario:match("^commit") and 1 or 0))
+  end
+end)
+
 local function persistence_copy(value)
   if type(value) ~= "table" then return value end
   local result = {}
@@ -327,6 +371,55 @@ test("a failed or timed-out guild session cannot damage another guild or be reus
   assert(base.closes == 3 and not base.leaked)
 end)
 
+test("guild store reports an unknown outcome when commit acknowledgement is lost", function()
+  for _, mode in ipairs({ "returned_error", "raised_error" }) do
+    local base, store = persistence_fixture(), nil
+    store = GuildStore.new(base)
+    local open_session = base.session
+    function base:session()
+      local session = open_session(self)
+      function session:commit()
+        self.base.data[self.guild] = self.tx_data -- simulate a commit reaching SeaWorld before its reply is lost
+        self.base.commits[self.guild] = (self.base.commits[self.guild] or 0) + 1
+        self.in_transaction, self.tx_data = false, nil
+        if mode == "raised_error" then error("commit reply lost") end
+        return false, "timeout"
+      end
+      return session
+    end
+    local ok, reason = store:run("10", function(data)
+      data.accounts["101"] = { wallet = 10 }
+      return true, "saved", true
+    end)
+    assert(not ok and reason == "outcome_unknown")
+    assert(base.data["10"].accounts["101"].wallet == 10 and base.commits["10"] == 1)
+    assert(not base.rollbacks["10"] and base.closes == 1 and not store.busy_guilds["10"])
+  end
+end)
+
+test("ledger retry after an unknown commit replays the persisted receipt without duplicating a reward", function()
+  local base = persistence_fixture()
+  local store = GuildStore.new(base)
+  local open_session, lose_acknowledgement = base.session, true
+  function base:session()
+    local session = open_session(self)
+    function session:commit()
+      self.base.data[self.guild] = self.tx_data
+      self.base.commits[self.guild] = (self.base.commits[self.guild] or 0) + 1
+      self.in_transaction, self.tx_data = false, nil
+      if lose_acknowledgement then lose_acknowledgement = false; return false, "timeout" end
+      return true
+    end
+    return session
+  end
+  local ledger = Ledger.new(store, function() return 2000000000 end)
+  local ok, reason = ledger:change("10", "101", "2001", "daily")
+  assert(not ok and reason == "outcome_unknown")
+  local replayed, result = ledger:change("10", "101", "2001", "daily")
+  assert(replayed and result.wallet == 100)
+  assert(base.data["10"].accounts["101"].wallet == 100 and #base.data["10"].journal == 1)
+end)
+
 test("connector sessions fork the connection and keep transaction lifecycle local", function()
   local next_id, states = 0, {}
   local driver = {}
@@ -393,6 +486,153 @@ test("guild store fails closed when the connector cannot create isolated session
   local ok, reason = store:run("10", function() error("must not run") end)
   assert(not ok and reason == "capability_unavailable")
   assert(not store.busy_guilds["10"])
+end)
+
+test("guild store preserves resource_limit and rolls back the untouched transaction", function()
+  local base = persistence_fixture()
+  local open_session = base.session
+  function base:session()
+    local session = open_session(self)
+    function session:update() return false, "resource_limit" end
+    return session
+  end
+  local store = GuildStore.new(base)
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "changed", true
+  end)
+  assert(not ok and reason == "resource_limit")
+  assert(base.rollbacks["10"] == 1 and base.commits["10"] == nil)
+  assert(base.data["10"].accounts["101"] == nil and not base.leaked)
+  assert(not store.busy_guilds["10"])
+end)
+
+test("guild and global stores preserve serialization_failed and roll back without committing", function()
+  local base = persistence_fixture()
+  local open_session = base.session
+  function base:session()
+    local session = open_session(self)
+    function session:update() return false, "serialization_failed" end
+    return session
+  end
+  local guild_store = GuildStore.new(base)
+  local guild_ok, guild_reason = guild_store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return true, "changed", true
+  end)
+  assert(not guild_ok and guild_reason == "serialization_failed")
+  assert(base.rollbacks["10"] == 1 and base.commits["10"] == nil)
+  assert(base.data["10"].accounts["101"] == nil)
+
+  local global_session = { in_transaction = false, rollbacks = 0, commits = 0 }
+  function global_session:query() return true, { rows = { { id = "global-doc" } } } end
+  function global_session:begin() self.in_transaction = true; return true end
+  function global_session:get() return true, { document = { data = {} } } end
+  function global_session:update() return false, "serialization_failed" end
+  function global_session:rollback() self.rollbacks = self.rollbacks + 1; self.in_transaction = false; return true end
+  function global_session:commit() self.commits = self.commits + 1; return true end
+  function global_session:close() self.in_transaction = false; return true end
+  local global_store = GlobalStore.new({ session = function() return global_session end })
+  local global_ok, global_reason = global_store:run("global-fixture", {}, function(data)
+    data.changed = true
+    return true, "changed", true
+  end)
+  assert(not global_ok and global_reason == "serialization_failed")
+  assert(global_session.rollbacks == 1 and global_session.commits == 0)
+  assert(not global_session.in_transaction)
+end)
+
+test("guild store reports outcome_unknown when rollback acknowledgement fails", function()
+  local base = persistence_fixture()
+  local open_session = base.session
+  function base:session()
+    local session = open_session(self)
+    function session:rollback()
+      self.in_transaction, self.tx_data = false, nil
+      return false, "timeout"
+    end
+    return session
+  end
+  local store = GuildStore.new(base)
+  local ok, reason = store:run("10", function(data)
+    data.accounts["101"] = { wallet = 10 }
+    return false, "validation_failed"
+  end)
+  assert(not ok and reason == "outcome_unknown")
+  assert(base.commits["10"] == nil and not store.busy_guilds["10"])
+  assert(base.data["10"].accounts["101"] == nil)
+end)
+
+test("global store preserves resource_limit and rolls back the open transaction", function()
+  local rollbacks = 0
+  local session = { in_transaction = false }
+  function session:query() return true, { rows = { { id = "global-doc" } } } end
+  function session:begin() self.in_transaction = true; return true end
+  function session:get() return true, { document = { data = {} } } end
+  function session:update() return false, "resource_limit" end
+  function session:rollback() rollbacks = rollbacks + 1; self.in_transaction = false; return true end
+  function session:close() self.in_transaction = false; return true end
+  local store = GlobalStore.new({ session = function() return session end })
+  local ok, reason = store:run("global-fixture", {}, function(data)
+    data.changed = true
+    return true, "updated", true
+  end)
+  assert(not ok and reason == "resource_limit" and rollbacks == 1 and not session.in_transaction)
+end)
+
+test("global store reports outcome_unknown when commit acknowledgement is lost", function()
+  for _, mode in ipairs({ "returned_error", "raised_error" }) do
+    local session = { in_transaction = false, commits = 0, rollbacks = 0 }
+    function session:query() return true, { rows = { { id = "global-doc" } } } end
+    function session:begin() self.in_transaction = true; return true end
+    function session:get()
+      self.tx_data = {}
+      return true, { document = { data = self.tx_data } }
+    end
+    function session:update() return true, { updated = true } end
+    function session:commit()
+      self.persisted = self.tx_data
+      self.commits = self.commits + 1
+      self.in_transaction = false
+      if mode == "raised_error" then error("commit reply lost") end
+      return false, "timeout"
+    end
+    function session:rollback()
+      self.rollbacks = self.rollbacks + 1
+      self.in_transaction = false
+      return true
+    end
+    function session:close() self.in_transaction = false; return true end
+    local store = GlobalStore.new({ session = function() return session end })
+    local ok, reason = store:run("global-fixture", {}, function(data)
+      data.changed = true
+      return true, "saved", true
+    end)
+    assert(not ok and reason == "outcome_unknown")
+    assert(session.persisted.changed and session.commits == 1 and session.rollbacks == 0)
+    assert(not session.in_transaction and not store.busy["global-fixture"])
+  end
+end)
+
+test("global store reports outcome_unknown when rollback acknowledgement fails", function()
+  local session = { in_transaction = false, commits = 0, rollbacks = 0 }
+  function session:query() return true, { rows = { { id = "global-doc" } } } end
+  function session:begin() self.in_transaction = true; return true end
+  function session:get() return true, { document = { data = {} } } end
+  function session:rollback()
+    self.rollbacks = self.rollbacks + 1
+    self.in_transaction = false
+    return false, "timeout"
+  end
+  function session:commit() self.commits = self.commits + 1; self.in_transaction = false; return true end
+  function session:close() self.in_transaction = false; return true end
+  local store = GlobalStore.new({ session = function() return session end })
+  local ok, reason = store:run("global-fixture", {}, function()
+    return false, "validation_failed"
+  end)
+  assert(not ok and reason == "outcome_unknown")
+  assert(session.rollbacks == 1 and session.commits == 0 and not session.in_transaction)
+  assert(not store.busy["global-fixture"])
 end)
 
 test("health status remains non-sensitive", function()

@@ -18,8 +18,8 @@ test("embed palette and core response categories are centralized", function()
     local embed = Embeds.create(kind, "Test", "Details")
     assert(embed.color == Embeds.colors[kind])
     equal(embed.description, "Details")
-    equal(embed.author.name, "Molly")
-    assert(embed.footer.text:find("Molly", 1, true))
+    equal(embed.author.name, "KiddyyMolly 🎀")
+    assert(embed.footer.text:find("KiddyyMolly", 1, true))
   end
 end)
 

@@ -49,19 +49,50 @@ There is no promise of exactly-once delivery across different interactions.
 
 Balances are nonnegative integer coins capped at 1,000,000,000,000 per pocket.
 Current configurable-in-code rewards are daily 100 coins/24h, weekly 500/7d,
-and work 20/1h; a backward clock fails closed. The initial bounded model allows
-200 accounts, 1,000 economy entries, 1,000 moderation cases and 50 notes per
-staff record; the transport's 1 MiB frame limit may be reached earlier. It
-does not prune receipts automatically: capacity errors require a deliberate
-future migration/retention policy. Transactions and staff/case history are
-limited when displayed, and no SeaWorld storage internals are exposed.
+and work 20/1h; a backward clock fails closed. Account records have no
+application-level count cap and are not evicted; the transport's 1 MiB frame
+limit may be reached earlier. The journal rotates at 1,000 records per guild,
+so balances continue to work while older history and Money-ID lookups age out.
+Economy idempotency receipts retain at most 1,000 requests per guild. Numeric
+per-request-type watermarks reject expired IDs rather than allowing a retry to
+repeat an old reward or charge; old replay results are no longer available.
+Unrelated legacy receipts are preserved during economy migration. Staff,
+Sephora, global blacklist, and lifecycle receipts have separate bounded windows
+(1,000, 5,000, 1,000, and 1,000 respectively); staff migration removes only
+receipts that exactly match the legacy staff-receipt shape. Moderation is capped
+at 1,000 cases and case receipts are compact references. Staff records remain
+limited to 50 notes each. Aggregate guild writes are rejected with
+`resource_limit` at the Molly 1 MiB JSON-frame boundary rather than silently
+truncated. Transactions and staff/case history are limited when displayed, and
+no SeaWorld storage internals are exposed.
 
-Music commands remain unregistered: the existing Lavalink adapter can check a
-v4 endpoint but does not implement playback or the Discord voice lifecycle.
+Music commands are registered in `molly.lua`: `/play`, playback controls,
+queue inspection/reordering, `/nowplaying`, and the persistent `/music-panel`.
+Music sessions are isolated by guild, require a verified Discord voice handshake,
+cap active sessions at 500, upcoming tracks at 50 (25 added per request, with at
+most 100 inspected), and normalize track metadata. Gateway callbacks and panel
+configuration caches have hard size limits; voice handshake events coalesce to
+the latest state, and saturated Lavalink callback queues trigger bounded
+playback recovery. The music panel only recreates a missing message after a
+confirmed Discord 404; a permission or transport failure does not create a
+duplicate. Playback still requires a configured and
+reachable Lavalink v4 service, and the deployment's `discord.lua` voice/REST
+contract must be verified before rollout.
+
+`/voice` configures Join-to-Create rooms and owner controls. It verifies a voice
+trigger inside a same-guild category, stores only rooms Molly created, caps
+those temporary rooms at 100 per guild, and deletes an empty room only when
+Discord confirms the REST operation. Runtime voice tracking is capped at 500
+guilds and 5,000 active members per guild; pending callbacks and move-suppression
+records are bounded. If a membership snapshot overflows or a callback/move
+buffer fills, cleanup fails closed until a fresh complete snapshot is received.
+Repeated trigger events do not create extra rooms.
+
 Presence rotation has 24 local texts, one writer and a 120-second interval;
 it performs no database queries and stops on shutdown.
 
-Run offline checks with `lua tests/test.lua`, `lua tests/sprint.lua`,
-`./runtime/luvit tests/sprint.lua` and `./runtime/luvit tests/discord_registration.lua`.
-`tests/economy_integration.lua` requires a separately started local SeaWorld
-service and a disposable database; it never selects a production path.
+See [`docs/testing.md`](testing.md) for the checked-in test matrix and exact
+commands. Plain Lua 5.1 suites run without Discord or SeaWorld. The separately
+classified Luvit tests use `tests/run_luvit.sh`; SeaWorld integration checks use
+`tests/run_integration.sh` only with a disposable test service explicitly
+confirmed by the operator.

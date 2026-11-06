@@ -6,7 +6,14 @@ local Panel = {}
 Panel.__index = Panel
 
 local ACTIONS = { "pause", "skip", "stop", "replay", "shuffle", "loop", "queue", "disconnect" }
+local MAX_CACHED_GUILDS = 500
 local function valid_id(value) return type(value) == "string" and #value <= 20 and value:match("^%d+$") ~= nil end
+local function valid_panel_config(value)
+  if type(value) ~= "table" then return false end
+  if value.channel_id ~= nil and not valid_id(value.channel_id) then return false end
+  if value.message_id ~= nil and not valid_id(value.message_id) then return false end
+  return (value.channel_id == nil) == (value.message_id == nil)
+end
 local function safe(value, limit)
   return tostring(value or "Unknown"):gsub("@", "@\226\128\139"):gsub("[\r\n]", " "):sub(1, limit or 180)
 end
@@ -15,7 +22,24 @@ function Panel.new(store, options)
   assert(store, "guild store is required")
   options = options or {}
   return setmetatable({ store = store, bot = options.bot, manager = options.manager,
-    cache = {}, last_signature = {}, last_update = {}, clock = options.clock or os.time }, Panel)
+    cache = {}, cache_access = {}, last_signature = {}, last_update = {}, clock = options.clock or os.time }, Panel)
+end
+
+function Panel:_remember(guild_id, value)
+  if self.cache[guild_id] == nil then
+    local count = 0; for _ in pairs(self.cache) do count = count + 1 end
+    if count >= MAX_CACHED_GUILDS then
+      local oldest_id, oldest_at
+      for id, at in pairs(self.cache_access) do
+        if not oldest_at or at < oldest_at then oldest_id, oldest_at = id, at end
+      end
+      if oldest_id then
+        self.cache[oldest_id], self.cache_access[oldest_id] = nil, nil
+        self.last_signature[oldest_id], self.last_update[oldest_id] = nil, nil
+      end
+    end
+  end
+  self.cache[guild_id], self.cache_access[guild_id] = value, self.clock()
 end
 
 function Panel:set_bot(bot, manager)
@@ -23,22 +47,28 @@ function Panel:set_bot(bot, manager)
 end
 
 function Panel:_read(guild_id)
-  if self.cache[guild_id] then return true, self.cache[guild_id] end
+  if self.cache[guild_id] then
+    self.cache_access[guild_id] = self.clock()
+    return true, self.cache[guild_id]
+  end
   local ok, result = self.store:run(guild_id, function(data)
-    return true, data.music_panel or {}, false
+    local value = data.music_panel or {}
+    if not valid_panel_config(value) then return false, "invalid_store" end
+    return true, value, false
   end)
-  if not ok then return false, "persistence_unavailable" end
-  self.cache[guild_id] = result
+  if not ok then return false, result == "invalid_store" and result or "persistence_unavailable" end
+  self:_remember(guild_id, result)
   return true, result
 end
 
 function Panel:_save(guild_id, value)
+  if not valid_id(guild_id) or not valid_panel_config(value) then return false, "invalid_argument" end
   local ok = self.store:run(guild_id, function(data)
     data.music_panel = value
     return true, true, true
   end)
   if not ok then return false, "persistence_unavailable" end
-  self.cache[guild_id] = value
+  self:_remember(guild_id, value)
   return true
 end
 
@@ -95,6 +125,11 @@ end
 function Panel:configure(guild_id, channel_id)
   if not valid_id(guild_id) or not valid_id(channel_id) then return false, "invalid_channel" end
   if not self.bot or not self.bot.rest then return false, "discord_unavailable" end
+  if type(self.bot.rest.get_channel) ~= "function" then return false, "channel_unverified" end
+  local fetched, channel = pcall(self.bot.rest.get_channel, self.bot.rest, channel_id)
+  if not fetched or type(channel) ~= "table" then return false, "channel_unverified" end
+  if channel.guild_id ~= guild_id then return false, "wrong_guild" end
+  if channel.type ~= 0 and channel.type ~= 5 then return false, "not_text_channel" end
   local payload = self:_payload(guild_id, self.manager and self.manager:state(guild_id, false))
   local ok, message = pcall(self.bot.rest.send_message, self.bot.rest, channel_id, payload)
   if not ok or type(message) ~= "table" or not valid_id(message.id) then return false, "panel_create_failed" end
@@ -125,13 +160,13 @@ function Panel:refresh(guild_id, state, force)
   if not ok or not valid_id(config.channel_id) or not valid_id(config.message_id) then return false end
   local payload, signature = self:_payload(guild_id, state)
   if not force and self.last_signature[guild_id] == signature then return true end
-  local ok_edit, err = pcall(self.bot.rest.edit_message, self.bot.rest, config.channel_id, config.message_id, payload)
-  if ok_edit then
+  local ok_edit, result = pcall(self.bot.rest.edit_message, self.bot.rest, config.channel_id, config.message_id, payload)
+  if ok_edit and type(result) == "table" then
     self.last_signature[guild_id], self.last_update[guild_id] = signature, self.clock()
     return true
   end
-  local status = type(err) == "table" and err.status_code
-  local code = type(err) == "table" and err.code
+  local status = type(result) == "table" and result.status_code
+  local code = type(result) == "table" and result.code
   if status ~= 404 and code ~= 10008 then return false, "panel_update_failed" end
   local ok_send, message = pcall(self.bot.rest.send_message, self.bot.rest, config.channel_id, payload)
   if not ok_send or type(message) ~= "table" or not valid_id(message.id) then return false, "panel_recreate_failed" end
@@ -182,11 +217,16 @@ end
 
 function Panel:recover(guild_id)
   local ok, config = self:_read(guild_id)
-  if not ok or not valid_id(config.channel_id) or not valid_id(config.message_id) then return false end
-  local fetched = pcall(self.bot.rest.get_message, self.bot.rest, config.channel_id, config.message_id)
-  if fetched then return true end
+  if not ok or not valid_id(config.channel_id) or not valid_id(config.message_id)
+    or not self.bot or not self.bot.rest or type(self.bot.rest.get_message) ~= "function" then return false end
+  local fetched, message = pcall(self.bot.rest.get_message, self.bot.rest, config.channel_id, config.message_id)
+  if fetched and type(message) == "table" and message.id == config.message_id then return true end
+  local status = type(message) == "table" and message.status_code
+  local code = type(message) == "table" and message.code
+  if fetched or (status ~= 404 and code ~= 10008) then return false, "panel_recovery_unverified" end
   local state = self.manager and self.manager:state(guild_id, false)
   return self:refresh(guild_id, state, true)
 end
 
+Panel.max_cached_guilds = MAX_CACHED_GUILDS
 return Panel
