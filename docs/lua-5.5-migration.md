@@ -12,17 +12,20 @@ runtime.
   `1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce`
   and built in an isolated Ubuntu WSL environment on 2026-11-06.
 - `luac -p` parsed `molly.lua` and every Lua file under `src/` and `tests/`.
-- The CI-safe suite under Lua 5.5.1 passed through the community tests and
-  stopped at three assertions in `tests/economy_v2.lua` (fashion isolation,
-  Sephora receipt rotation, slash registration). The same three assertions
-  failed in the existing Lua 5.1 GitHub CI on `main` before this assessment.
-  They are baseline failures, not evidence of a Lua 5.5.1 regression.
+- The first CI-safe run under Lua 5.5.1 stopped at three stale assertions in
+  `tests/economy_v2.lua`. Those same assertions failed in the Lua 5.1 GitHub
+  CI. The tests now reflect the paid, ownership-gated look model and the
+  current shop command tree. A retained Sephora request is resolved before
+  current ownership, so replay remains stable if inventory changes.
+- After those corrections, the full CI-safe matrix, including its stress
+  profile and Python configuration checks, passed locally under both Lua 5.1
+  and Lua 5.5.1. This still does not qualify the live Luvit runtime.
 - The PreppyDB connector and its bundled client passed under Lua 5.5.1 up
   to that point. No live database or Discord service was used.
 
 ## Migration gates
 
-1. Repair the current Lua 5.1 economy test baseline without weakening tests.
+1. Keep the repaired Lua 5.1 economy test baseline green in GitHub CI.
 2. Add a separate, pinned Lua 5.5.1 job for all service-independent suites.
    Keep the Lua 5.1 job until the runtime cutover is qualified.
 3. Inventory the deployed `runtime/luvit` and `deps/` binaries and versions.
