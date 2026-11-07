@@ -1,12 +1,49 @@
 local Store = require("src.persistence.guild_store")
 local Util = require("src.commands.community_util")
 local Catalog = require("src.economy.catalog")
+require("src.economy.catalog_extensions").install(Catalog)
 local Money = require("src.economy.money_format")
+local Response = require("src.discord.response")
+local ShopPreview = require("src.economy.shop_preview")
 
 local Commands = {}
 
 local function money(settings, guild, amount)
   return Money.formatter(settings, guild)(amount)
+end
+
+local function item_preview(ctx, item, settings, guild, retail)
+  local preview = ShopPreview.for_item(item)
+  local category = preview and preview.category
+  local fields = {
+    { name = "Category", value = Util.safe(item.category or ShopPreview.category_label(category), 100), inline = true },
+    { name = "Collection", value = Util.safe(item.collection or (retail and "Curated reference" or "Molly Originals"), 100), inline = true },
+    { name = "Rarity", value = Util.safe(item.rarity or (retail and "Reference item" or "Everyday"), 50), inline = true },
+    { name = "Availability", value = item.available == false and "Archived in the virtual catalog; past ownership is unchanged." or "Available in Molly's virtual shop.", inline = false },
+  }
+  if retail then
+    local variants = {}
+    for _, variant in ipairs(item.variants or {}) do
+      variants[#variants + 1] = string.format("%s — %s (`%s`)", Util.safe(variant.variant, 48),
+        money(settings, guild, variant.price), Util.safe(variant.id, 32))
+    end
+    fields[#fields + 1] = { name = string.format("Variants · page %d/%d", item.page or 1, item.pages or 1),
+      value = #variants > 0 and table.concat(variants, "\n") or "No purchasable variants are listed.", inline = false }
+    fields[#fields + 1] = { name = "Purchase", value = "Use `/shop buy` with a listed variant ID. This is a virtual Molly Coin item.", inline = false }
+  else
+    fields[#fields + 1] = { name = "Price", value = money(settings, guild, item.price), inline = true }
+    fields[#fields + 1] = { name = "Item ID", value = "`" .. Util.safe(item.store_code or item.id, 32) .. "`", inline = true }
+    fields[#fields + 1] = { name = "Purchase", value = "Use `/shop buy` with this item ID. No real purchase is made.", inline = false }
+  end
+  if preview and not preview.image_url then fields[#fields + 1] = { name = "Preview", value = preview.fallback or "🎀", inline = true } end
+
+  Response.set_embed(ctx, {
+    kind = "economy", title = Util.safe(item.name, 256),
+    description = Util.safe(item.description, 1800), fields = fields,
+    thumbnail = preview and preview.image_url or nil,
+  })
+  local opening = retail and "A curated Molly boutique preview 🎀" or "OMGGG bestie, your Molly boutique preview is here 🎀"
+  Util.reply(ctx, opening)
 end
 
 function Commands.register(router, shop, settings)
@@ -143,22 +180,18 @@ function Commands.register(router, shop, settings)
         end
         Util.reply(ctx, #products > 0 and table.concat(lines, "\n") or "No curated products matched that search.")
       elseif action == "item" then
-        local ok, product = shop:retail_item(guild, Util.arg(ctx, "product"), Util.arg(ctx, "page"))
-        if not ok then Util.reply(ctx, product == "shop_disabled" and "The virtual retail shop is disabled for this server."
-          or "That product is not in the curated catalog."); return end
-        local lines = { string.format("%s · %s", Util.safe(product.brand, 40), Util.safe(product.name, 80)),
-          Util.safe(product.description, 160), "Variants (use a variant ID with `/shop buy`):" }
-        if not product.available then lines[#lines + 1] = "This product is archived and cannot currently be purchased; saved inventory remains valid." end
-        if product.color then lines[#lines + 1] = "Color: " .. Util.safe(product.color, 60) end
-        for _, variant in ipairs(product.variants) do
-          lines[#lines + 1] = string.format("• %s — %s (`%s`)", Util.safe(variant.variant, 30),
-            money(settings, guild, variant.price), Util.safe(variant.id, 32))
+        local product_id = Util.arg(ctx, "product")
+        local ok, product = shop:retail_item(guild, product_id, Util.arg(ctx, "page"))
+        if ok then
+          item_preview(ctx, product, settings, guild, true)
+        elseif product == "unknown_item" then
+          local item = type(product_id) == "string" and Catalog.get(product_id) or nil
+          if item then item_preview(ctx, item, settings, guild, false)
+          else Util.reply(ctx, "That product is not in Molly's curated catalog.") end
+        else
+          Util.reply(ctx, product == "shop_disabled" and "The virtual retail shop is disabled for this server."
+            or "That product is not in the curated catalog.")
         end
-        if product.variants[1] then
-          lines[#lines + 1] = "Reference price checked " .. Util.safe(product.variants[1].price_snapshot.checked_at, 10)
-        end
-        lines[#lines + 1] = string.format("Variant page %d/%d · %d available variants", product.page, product.pages, product.variant_count)
-        Util.reply(ctx, table.concat(lines, "\n"))
       elseif action == "cart" or action == "wishlist" or action == "favorites" then
         local operation, item_id = Util.arg(ctx, "operation"), Util.arg(ctx, "item")
         if operation == "show" then

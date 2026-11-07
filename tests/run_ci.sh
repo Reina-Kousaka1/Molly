@@ -18,6 +18,7 @@ for suite in \
   tests/personality_engine.lua \
   tests/community.lua \
   tests/economy_v2.lua \
+  tests/shop_preview.lua \
   tests/retail_catalog.lua \
   tests/observability.lua \
   tests/music_voice.lua \
