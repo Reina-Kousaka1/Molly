@@ -1,5 +1,6 @@
 local Personality = {}
 local Seasonal = require("src.seasonal")
+local PREFIX_MARKER, DISCORD_CONTENT_LIMIT = "🎀 ", 2000
 
 -- Keep voice and flavor centralized. Templates carry the concrete values so a
 -- playful variant can never replace the useful result or error information.
@@ -37,7 +38,17 @@ function Personality.profile(timestamp)
 end
 
 function Personality.about(_timestamp)
-  return "Your pink little Discord bestie! 💗 From Molly Coins and fictional shopping adventures to moderation, music, and helpful server features, I bring a little sparkle while keeping server safety real."
+  return "I'm KiddyyMolly, your pink little Discord bestie! 💗 From Molly Coins and fictional shopping adventures to moderation, music, and helpful server features, I bring a little sparkle while keeping server safety real."
+end
+
+-- Prefix commands use Discord message replies instead of the shared interaction
+-- embed pipeline. Add a small, consistent identity marker without rewriting
+-- command output (amounts, IDs, diagnostics, and moderation language stay intact).
+function Personality.prefix_response(text)
+  if type(text) ~= "string" then return text end
+  if text:sub(1, #PREFIX_MARKER) == PREFIX_MARKER then return text end
+  if #text + #PREFIX_MARKER > DISCORD_CONTENT_LIMIT then return text end
+  return PREFIX_MARKER .. text
 end
 
 return Personality

@@ -16,6 +16,10 @@ The handler ignores DMs, bots, webhooks, mass mentions, oversized text, irreleva
 
 The personality listener uses the same `on_message` API already used by Molly's prefix router and registers once on the Bot object, not on each reconnect. Replies use the existing Discord REST `send_message` method. Failures are logged with guild/channel context, delivery outcome, and safe Discord HTTP/error codes or a fixed error category; raw exception text, message content, and REST payloads are never logged. A failed send keeps the persisted response cooldown to prevent retry loops. Molly only attempts a reply after a guild message passes validation, and REST permissions remain Discord's authorization boundary.
 
+## User-facing response identity
+
+Slash-command replies and deferred edits pass through `src/discord/response.lua` and the shared embed builder. The builder applies the KiddyyMolly author, palette, and footer while leaving the command's body intact; category colors distinguish informational, economy, music, moderation, warning, and error responses. Moderation wording and diagnostic values therefore remain direct and factual. Prefix-command replies use the same command handlers but Discord's message-reply API, so `Personality.prefix_response` adds only a small bow marker when it fits the 2,000-character message limit. It does not paraphrase or truncate IDs, balances, error details, or moderation instructions. Admin-configured welcome and logging text remains under the server's control rather than being rewritten by the personality layer.
+
 `molly.lua` already requests Discord's privileged Message Content intent. The Discord Developer Portal must have that intent enabled for live message content to arrive; no portal setting was changed as part of this repository work.
 
 ## Status awareness and integration boundary

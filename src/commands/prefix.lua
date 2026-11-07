@@ -1,4 +1,5 @@
 local Store = require("src.persistence.guild_store")
+local Personality = require("src.personality")
 
 local Prefix = {}
 Prefix.__index = Prefix
@@ -29,7 +30,7 @@ function Prefix.new(router, settings, options)
 end
 
 function Prefix:_reply(message, text, command)
-  local ok = pcall(message.reply, message, text)
+  local ok = pcall(message.reply, message, Personality.prefix_response(text))
   if not ok and self.logger then
     self.logger:warn("prefix_command_reply_failed", { command = command or "unknown", detail = "discord_rest_error" })
   end

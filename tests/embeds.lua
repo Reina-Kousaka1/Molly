@@ -41,7 +41,7 @@ test("about command renders verified features, build version, and the brand disc
   local embed = called.options.embeds[1]
   equal(embed.title, "KiddyyMolly 🎀")
   equal(embed.color, Embeds.palette.primary_pink)
-  assert(embed.description:find("Your pink little Discord bestie", 1, true))
+  assert(embed.description:find("I'm KiddyyMolly, your pink little Discord bestie", 1, true))
   local fields = {}
   for _, field in ipairs(embed.fields) do fields[field.name] = field.value end
   assert(fields["Molly Coins & shopping 💗"]:find("fictional", 1, true))
@@ -132,6 +132,20 @@ test("automatic response embeds preserve ephemeral flags and components", functi
   equal(called.options.components[1], "kept")
   equal(called.options.embeds[1].color, Embeds.colors.error)
   equal(called.options.embeds[1].description, "You do not have permission to use this command.")
+end)
+
+test("response presentation stays branded while sensitive and technical wording stays exact", function()
+  local cases = {
+    { "Moderation", "warn", "Warning saved for user 123456789012345678; case C42." },
+    { "Administration", "settings", "You do not have permission to change server settings." },
+    { "Utility", "runtime", "Molly Health: Status degraded · SeaWorld unavailable" },
+  }
+  for _, case in ipairs(cases) do
+    local embed = Embeds.for_command(case[1], case[2], case[3])[1]
+    equal(embed.description, case[3])
+    equal(embed.author.name, "KiddyyMolly 🎀")
+    assert(embed.footer.text:find("KiddyyMolly", 1, true))
+  end
 end)
 
 test("ordinary decorated command responses remain public embeds", function()
