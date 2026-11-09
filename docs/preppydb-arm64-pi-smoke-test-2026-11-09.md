@@ -1,11 +1,11 @@
 # PreppyDB ARM64 Raspberry Pi 4 smoke-test evidence
 
-Status: **isolated hardware smoke test passed; production cutover NOT approved**  
-Observed: 2026-11-09 (operator-provided Termius screenshots and command output)  
-Repository: `Reina-Kousaka1/Molly`, branch `feature/preppydb-persistence`  
-Molly integration baseline: `63f36b337d887565b490db91062da2481d5e1378`  
-Pinned PreppyDB artifact revision: `8d944d64698ce614e45eb95b54d78436d7721c66`  
-Artifact: `preppydb-linux-arm64-gnu-8d944d64698ce614e45eb95b54d78436d7721c66`, workflow run `42579235784`
+- Status: **isolated hardware smoke test passed; production cutover NOT approved**
+- Observed: 2026-11-09 (operator-provided Termius screenshots and command output)
+- Repository: `Reina-Kousaka1/Molly`, branch `feature/preppydb-persistence`
+- Molly integration baseline: `63f36b337d887565b490db91062da2481d5e1378`
+- Pinned PreppyDB artifact revision: `8d944d64698ce614e45eb95b54d78436d7721c66`
+- Artifact: `preppydb-linux-arm64-gnu-8d944d64698ce614e45eb95b54d78436d7721c66`, workflow run `42579235784`
 
 ## Scope and environment
 

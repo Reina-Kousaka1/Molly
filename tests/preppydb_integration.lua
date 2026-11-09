@@ -369,4 +369,3 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
 end)
 
 io.stdout:write("PreppyDB real-server integration: pass\n")
-
