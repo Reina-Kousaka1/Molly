@@ -17,9 +17,11 @@ package.loaded.uv = uv
 -- Keep each native test in the same Luvit runtime context. Only these explicit
 -- repository test entrypoints may be selected by the CI wrapper.
 local allowed_tests = {
-  ["tests/preppydb_integration.lua"] = true,
-  ["tests/preppydb_restart.lua"] = true,
+  integration = "tests/preppydb_integration.lua",
+  restart = "tests/preppydb_restart.lua",
 }
-local selected_test = arg and arg[1] or "tests/preppydb_integration.lua"
-assert(allowed_tests[selected_test], "unsupported PreppyDB integration test entrypoint")
+local selection = os.getenv("MOLLY_PREPPYDB_TEST")
+local selected_test = selection and allowed_tests[selection]
+assert(selected_test, "MOLLY_PREPPYDB_TEST must be 'integration' or 'restart'")
+print("Selected PreppyDB test: " .. selection)
 dofile(selected_test)

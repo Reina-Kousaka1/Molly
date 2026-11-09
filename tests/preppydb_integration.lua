@@ -122,6 +122,14 @@ test("Molly guild/global store read, write and multi-guild isolation", function(
 end)
 
 test("PreppyDB transaction is atomic across document keys and enforces CAS", function()
+  for _, key in ipairs({ "txn-a", "txn-b" }) do
+    local existing, lookup_error = connector:get("molly_guild_state", key)
+    local code = type(lookup_error) == "table" and lookup_error.code or nil
+    assert(not existing and code == "not_found",
+      "synthetic CAS key already exists before transaction: key=" .. key
+        .. " version=" .. tostring(existing and existing.version)
+        .. " lookup_code=" .. tostring(code))
+  end
   local created, create_error = connector:transaction({
     { op = "put", collection = "molly_guild_state", key = "txn-a", expected_version = 0, value = { marker = "a" } },
     { op = "put", collection = "molly_guild_state", key = "txn-b", expected_version = 0, value = { marker = "b" } },
