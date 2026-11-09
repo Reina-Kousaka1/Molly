@@ -14,6 +14,12 @@ print("Luvit uv module: OK")
 package.loaded.http = http
 package.loaded.uv = uv
 
--- Keep the smoke check and the real integration suite in the same Luvit
--- process and runtime context. This script is invoked from the repository root.
-dofile("tests/preppydb_integration.lua")
+-- Keep each native test in the same Luvit runtime context. Only these explicit
+-- repository test entrypoints may be selected by the CI wrapper.
+local allowed_tests = {
+  ["tests/preppydb_integration.lua"] = true,
+  ["tests/preppydb_restart.lua"] = true,
+}
+local selected_test = arg and arg[1] or "tests/preppydb_integration.lua"
+assert(allowed_tests[selected_test], "unsupported PreppyDB integration test entrypoint")
+dofile(selected_test)

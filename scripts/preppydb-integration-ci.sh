@@ -88,7 +88,7 @@ kill -KILL "$SERVER_PID"
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=
 start_server
-"$LUVIT_BIN" tests/preppydb_restart.lua
+"$LUVIT_BIN" tests/preppydb_luvit_entry.lua tests/preppydb_restart.lua
 
 echo "Stopping the server before offline backup/restore maintenance."
 kill -TERM "$SERVER_PID"
