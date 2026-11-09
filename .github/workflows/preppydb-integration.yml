@@ -22,7 +22,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       PREPPYDB_REVISION: 8d944d64698ce614e45eb95b54d78436d7721c66
-      ARTIFACT_DIR: ${{ runner.temp }}/molly-preppydb-artifacts
     steps:
       - name: Checkout Molly candidate
         uses: actions/checkout@v4
@@ -108,7 +107,10 @@ jobs:
           echo "$RUNTIME" >> "$GITHUB_PATH"
 
       - name: Prepare temporary test artifacts
-        run: mkdir -p "$ARTIFACT_DIR"
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/molly-preppydb-artifacts"
+          mkdir -p "$ARTIFACT_DIR"
+          echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
 
       - name: Run the complete native Lua 5.1 regression suite
         run: |
