@@ -22,6 +22,9 @@ local function boolean(value, default, errors, name)
   return default
 end
 local function valid_http_url(value) return value and value:match("^https?://[^/%s]+") and not value:match("^https?://[^/]*@") end
+local function valid_preppydb_url(value)
+  return value and value:match("^http://[^/%s]+") and not value:match("^http://[^/]*@")
+end
 local function ids(value, errors)
   local result = {}; value = trim(value)
   if not value then return result end
@@ -45,6 +48,21 @@ function Config.load(env)
   if sea_world_url and not valid_http_url(sea_world_url) then errors[#errors + 1] = "SEAWORLD_HEALTH_URL" end
   local timeout_ms = positive_integer(read(env, "SEAWORLD_TIMEOUT_MS"), 1000, 100, 30000, errors, "SEAWORLD_TIMEOUT_MS")
   local retry_attempts = positive_integer(read(env, "SEAWORLD_RETRY_ATTEMPTS"), 1, 1, 3, errors, "SEAWORLD_RETRY_ATTEMPTS")
+  local persistence_backend = (trim(read(env, "MOLLY_PERSISTENCE_BACKEND")) or "seaworld"):lower()
+  if persistence_backend ~= "seaworld" and persistence_backend ~= "preppydb" then
+    errors[#errors + 1] = "MOLLY_PERSISTENCE_BACKEND"
+    persistence_backend = "seaworld"
+  end
+  local preppydb_url = trim(read(env, "MOLLY_PREPPYDB_URL"))
+  local preppydb_token = trim(read(env, "MOLLY_PREPPYDB_TOKEN"))
+  local preppydb_timeout_ms = positive_integer(read(env, "MOLLY_PREPPYDB_TIMEOUT_MS"), 3000, 100, 30000, errors, "MOLLY_PREPPYDB_TIMEOUT_MS")
+  local preppydb_max_response_bytes = positive_integer(read(env, "MOLLY_PREPPYDB_MAX_RESPONSE_BYTES"), 4 * 1024 * 1024, 1024, 16 * 1024 * 1024, errors, "MOLLY_PREPPYDB_MAX_RESPONSE_BYTES")
+  if preppydb_url and not valid_preppydb_url(preppydb_url) then errors[#errors + 1] = "MOLLY_PREPPYDB_URL" end
+  if preppydb_token and preppydb_token:find("[%z\1-\31\127]") then errors[#errors + 1] = "MOLLY_PREPPYDB_TOKEN" end
+  if persistence_backend == "preppydb" then
+    if not preppydb_url then errors[#errors + 1] = "MOLLY_PREPPYDB_URL" end
+    if not preppydb_token then errors[#errors + 1] = "MOLLY_PREPPYDB_TOKEN" end
+  end
   local lavalink_url = trim(read(env, "MOLLY_LAVALINK_URL")); local lavalink_password = trim(read(env, "MOLLY_LAVALINK_PASSWORD")); local music_errors = {}
   if lavalink_url and not valid_http_url(lavalink_url) then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL" end
   if lavalink_url and not lavalink_password then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_PASSWORD" elseif lavalink_password and not lavalink_url then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL" end
@@ -59,6 +77,13 @@ function Config.load(env)
     discord = { token = token, guild_members_intent = guild_members_intent }, developers = developers,
     integrations = { spotify_client_id = trim(read(env, "MOLLY_SPOTIFY_CLIENT_ID")), spotify_client_secret = trim(read(env, "MOLLY_SPOTIFY_CLIENT_SECRET")), youtube_api_key = trim(read(env, "MOLLY_YOUTUBE_API_KEY")) },
     music = { lavalink_url = lavalink_url, lavalink_password = lavalink_password, lavalink_timeout_ms = lavalink_timeout_ms, configuration_errors = music_errors },
+    persistence = {
+      backend = persistence_backend,
+      preppydb = {
+        url = preppydb_url, token = preppydb_token, timeout_ms = preppydb_timeout_ms,
+        max_response_bytes = preppydb_max_response_bytes,
+      },
+    },
     seaworld = { socket = sea_world_socket, health_url = sea_world_url, timeout_ms = timeout_ms, retry_attempts = retry_attempts },
     updater = { url = updater_url, token = updater_token },
     build = { version = trim(read(env, "MOLLY_VERSION")) or "1.2", commit = trim(read(env, "MOLLY_COMMIT")) },

@@ -1,0 +1,197 @@
+name: PreppyDB isolated integration
+
+on:
+  push:
+    branches: [feature/preppydb-persistence]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preppydb-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-lua-preppydb:
+    name: Native Lua 5.1 + Luvit + pinned PreppyDB
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      PREPPYDB_REVISION: 8d944d64698ce614e45eb95b54d78436d7721c66
+    steps:
+      - name: Checkout Molly candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the verified PreppyDB PR revision
+        uses: actions/checkout@v4
+        with:
+          repository: Reina-Kousaka1/PreppyDB
+          ref: 8d944d64698ce614e45eb95b54d78436d7721c66
+          path: preppydb
+          persist-credentials: false
+
+      - name: Install declared Rust MSRV
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Install native Lua 5.1 and Luvit build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.1 build-essential cmake libssl-dev perl pkg-config curl git
+
+          require_executable() {
+            local name="$1"
+            if ! command -v "$name" >/dev/null 2>&1; then
+              echo "Required setup executable is missing: $name" >&2
+              exit 1
+            fi
+            echo "Found setup executable: $name"
+          }
+
+          run_setup_check() {
+            local label="$1"
+            shift
+            echo "::group::$label"
+            if "$@"; then
+              echo "$label: passed"
+            else
+              local status=$?
+              echo "$label: failed (exit $status): $*" >&2
+              exit "$status"
+            fi
+            echo "::endgroup::"
+          }
+
+          require_executable lua5.1
+          require_executable luac5.1
+          require_executable rustc
+          require_executable cargo
+
+          echo "::group::Verify Lua interpreter version"
+          if lua_version_output=$(lua5.1 -v 2>&1); then
+            printf '%s\n' "$lua_version_output"
+          else
+            status=$?
+            echo "Lua interpreter version command failed (exit $status)." >&2
+            exit "$status"
+          fi
+          case "$lua_version_output" in
+            *"Lua 5.1.5"*) ;;
+            *) echo "Expected Lua 5.1.5; received unexpected version output." >&2; exit 1 ;;
+          esac
+          echo "Lua interpreter version: passed"
+          echo "::endgroup::"
+
+          run_setup_check "Verify Lua 5.1 runtime behavior" lua5.1 -e 'assert(_VERSION == "Lua 5.1")'
+          run_setup_check "Parse Molly entrypoint with Lua 5.1" luac5.1 -p molly.lua
+          run_setup_check "Report Rust compiler version" rustc --version
+          run_setup_check "Report Cargo version" cargo --version
+
+      - name: Verify exact PreppyDB source revision and build server/CLI
+        working-directory: preppydb
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PREPPYDB_REVISION"
+          cargo build --locked --release --bin preppydb-server --bin preppydb
+
+      - name: Build the pinned Luvit runtime
+        run: |
+          set -euo pipefail
+          RUNTIME="$RUNNER_TEMP/molly-luvit-runtime"
+          mkdir -p "$RUNTIME"
+          LUVI_BIN="$RUNTIME/luvi"
+          LUVI_URL=https://github.com/luvit/luvi/releases/download/v2.14.0/luvi-regular-Linux_x86_64
+          LUVI_SHA256=f79614b208f7999030a13fca22ffeb91c3d880487be2b5b7e2425ab42ec7a1d0
+          LUVI_SOURCE_COMMIT=450ec116aef6f8cb0cba83c7e61c9bce112d6deb
+
+          if curl --fail --location --silent --show-error \
+            --connect-timeout 15 --max-time 90 \
+            --retry 4 --retry-delay 2 --retry-max-time 60 --retry-all-errors \
+            "$LUVI_URL" -o "$LUVI_BIN"; then
+            printf '%s  %s\n' "$LUVI_SHA256" "$LUVI_BIN" | sha256sum --check
+          else
+            rm -f -- "$LUVI_BIN"
+            echo "Official luvi binary unavailable; building pinned v2.14.0 source."
+            git clone --no-checkout https://github.com/luvit/luvi.git "$RUNTIME/luvi-src"
+            git -C "$RUNTIME/luvi-src" checkout --detach "$LUVI_SOURCE_COMMIT"
+            test "$(git -C "$RUNTIME/luvi-src" rev-parse HEAD)" = "$LUVI_SOURCE_COMMIT"
+            test "$(git -C "$RUNTIME/luvi-src" rev-parse 'v2.14.0^{commit}')" = "$LUVI_SOURCE_COMMIT"
+            git -C "$RUNTIME/luvi-src" submodule update --init --recursive
+            if git -C "$RUNTIME/luvi-src" submodule status --recursive | grep -E '^[-+U]'; then
+              echo "luvi submodules do not match the pinned gitlinks" >&2
+              exit 1
+            fi
+            make -C "$RUNTIME/luvi-src" regular-shared NPROCS=2
+            make -C "$RUNTIME/luvi-src" NPROCS=2
+            make -C "$RUNTIME/luvi-src" test NPROCS=2
+            install -m 0755 "$RUNTIME/luvi-src/build/luvi" "$LUVI_BIN"
+          fi
+          chmod 0755 "$LUVI_BIN"
+          "$LUVI_BIN" --version | tee "$RUNNER_TEMP/luvi-version.txt" | grep -F '2.14.0'
+
+          git clone --no-checkout https://github.com/luvit/lit.git "$RUNTIME/lit-src"
+          git -C "$RUNTIME/lit-src" checkout --detach 84fc5d729f1088b3b93bc9a55d1f7a245bca861d
+          git -C "$RUNTIME/lit-src" submodule update --init --recursive
+          test "$(git -C "$RUNTIME/lit-src" rev-parse HEAD)" = 84fc5d729f1088b3b93bc9a55d1f7a245bca861d
+          (cd "$RUNTIME/lit-src" && "$LUVI_BIN" . -- make . "$RUNTIME/lit" "$LUVI_BIN")
+
+          git clone --no-checkout https://github.com/luvit/luvit.git "$RUNTIME/luvit-src"
+          git -C "$RUNTIME/luvit-src" checkout --detach 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
+          git -C "$RUNTIME/luvit-src" submodule update --init --recursive
+          test "$(git -C "$RUNTIME/luvit-src" rev-parse HEAD)" = 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
+          (cd "$RUNTIME/luvit-src" && "$RUNTIME/lit" make . "$RUNTIME/luvit" "$LUVI_BIN")
+          "$RUNTIME/luvit" --version | tee "$RUNNER_TEMP/luvit-version.txt"
+          echo "$RUNTIME" >> "$GITHUB_PATH"
+
+      - name: Prepare temporary test artifacts
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/molly-preppydb-artifacts"
+          mkdir -p "$ARTIFACT_DIR"
+          echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
+
+      - name: Run the complete native Lua 5.1 regression suite
+        run: |
+          set -euo pipefail
+          LUA_BIN=lua5.1 LUAC_BIN=luac5.1 PYTHON_BIN=python3 tests/run_ci.sh 2>&1 | tee "$ARTIFACT_DIR/native-lua-regression.log"
+
+      - name: Run real PreppyDB connector, economy, migration, restart and backup/restore tests
+        env:
+          PREPPYDB_SERVER_BIN: ${{ github.workspace }}/preppydb/target/release/preppydb-server
+          PREPPYDB_CLI_BIN: ${{ github.workspace }}/preppydb/target/release/preppydb
+          LUVIT_BIN: ${{ runner.temp }}/molly-luvit-runtime/luvit
+        run: |
+          set -euo pipefail
+          bash scripts/preppydb-integration-ci.sh 2>&1 | tee "$ARTIFACT_DIR/preppydb-e2e.log"
+
+      - name: Check patch whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$BASE_SHA...HEAD"
+          elif [[ -n "${BEFORE_SHA:-}" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "$BEFORE_SHA...HEAD"
+          else
+            git diff --check HEAD
+          fi
+
+      - name: Upload sanitized integration logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: molly-preppydb-integration-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/molly-preppydb-artifacts/
+            ${{ runner.temp }}/luvi-version.txt
+            ${{ runner.temp }}/luvit-version.txt
+          if-no-files-found: ignore
+          retention-days: 7

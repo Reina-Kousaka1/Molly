@@ -59,6 +59,36 @@ test("config accepts namespaced SeaWorld configuration", function()
   }))
   equal(config.seaworld.timeout_ms, 250)
   equal(config.seaworld.retry_attempts, 2)
+  equal(config.persistence.backend, "seaworld")
+end)
+
+test("PreppyDB backend is explicit and requires its private endpoint and token", function()
+  local config, errors = Config.load({
+    MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSISTENCE_BACKEND = "preppydb",
+  })
+  assert(config == nil)
+  equal(table.concat(errors, ","), "MOLLY_PREPPYDB_URL,MOLLY_PREPPYDB_TOKEN")
+  config = assert(Config.load({
+    MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSISTENCE_BACKEND = "PreppyDB",
+    MOLLY_PREPPYDB_URL = "http://127.0.0.1:7077", MOLLY_PREPPYDB_TOKEN = "secret",
+  }))
+  equal(config.persistence.backend, "preppydb")
+  equal(config.persistence.preppydb.url, "http://127.0.0.1:7077")
+end)
+
+test("PreppyDB endpoint rejects credentials and unsupported HTTPS transport", function()
+  for _, url in ipairs({ "http://user:pass@example.invalid", "https://db.example.invalid" }) do
+    local config, errors = Config.load({
+      MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSISTENCE_BACKEND = "preppydb",
+      MOLLY_PREPPYDB_URL = url, MOLLY_PREPPYDB_TOKEN = "secret",
+    })
+    assert(config == nil and table.concat(errors, ","):find("MOLLY_PREPPYDB_URL", 1, true))
+  end
+  local config, errors = Config.load({
+    MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSISTENCE_BACKEND = "preppydb",
+    MOLLY_PREPPYDB_URL = "http://127.0.0.1:7077", MOLLY_PREPPYDB_TOKEN = "bad\ntoken",
+  })
+  assert(config == nil and table.concat(errors, ","):find("MOLLY_PREPPYDB_TOKEN", 1, true))
 end)
 
 test("config rejects a SeaWorld URL containing credentials", function()
@@ -738,6 +768,19 @@ test("health snapshot reports healthy runtime, Discord, SeaWorld, persistence, a
   local text = Health.message(state)
   assert(text:find("Uptime: 2h 14m", 1, true))
   assert(not text:find("socket", 1, true))
+end)
+
+test("health reports an explicitly selected PreppyDB persistence backend", function()
+  local backend = { health = function() return { status = "healthy", api_version = "1.0.0" } end }
+  local app = App.new({ logger = Logger.new(function() end), seaworld = backend,
+    persistence = backend, persistence_backend = "preppydb" })
+  app.running, app.started_at, app.discord_connected = true, os.time(), true
+  local state = app:health_snapshot()
+  equal(state.status, "healthy")
+  equal(state.persistence.status, "healthy")
+  equal(state.seaworld.status, "unavailable")
+  equal(state.persistence_backend, "preppydb")
+  assert(Health.message(state):find("Persistence (preppydb): Healthy (API 1.0.0)", 1, true))
 end)
 
 test("health command defers before running checks and edits the final response", function()
