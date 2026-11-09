@@ -94,10 +94,10 @@ echo "Stopping the server before offline backup/restore maintenance."
 kill -TERM "$SERVER_PID"
 wait "$SERVER_PID"
 SERVER_PID=
-"$PREPPYDB_CLI_BIN" --data-dir "$DATA_DIR" backup --out "$BACKUP_FILE"
+"$PREPPYDB_CLI_BIN" backup --out "$BACKUP_FILE" --data-dir "$DATA_DIR"
 "$PREPPYDB_CLI_BIN" backup-verify --archive "$BACKUP_FILE"
 "$PREPPYDB_CLI_BIN" restore --archive "$BACKUP_FILE" --target "$RESTORE_DIR"
-"$PREPPYDB_CLI_BIN" --data-dir "$RESTORE_DIR" verify
-"$PREPPYDB_CLI_BIN" --data-dir "$RESTORE_DIR" get --collection molly_guild_state --key 91003 >"$ARTIFACT_DIR/restored-guild.json"
+"$PREPPYDB_CLI_BIN" verify --data-dir "$RESTORE_DIR"
+"$PREPPYDB_CLI_BIN" get --collection molly_guild_state --key 91003 --data-dir "$RESTORE_DIR" >"$ARTIFACT_DIR/restored-guild.json"
 grep -E '"guild"[[:space:]]*:[[:space:]]*"91003"' "$ARTIFACT_DIR/restored-guild.json" >/dev/null
 echo "PreppyDB isolated backup, verify and restore: pass"
