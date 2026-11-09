@@ -7,6 +7,8 @@ local messages = { invalid_user = "A valid server user is required.", invalid_ta
   overflow = "That amount would exceed the balance limit.", cooldown = "That reward is not available yet.",
   replay_conflict = "This request ID was already used for a different economy action; no new changes were made.",
   replay_expired = "This request is outside the retained retry window; no new economy action was made.",
+  conflict = "A concurrent server update prevented this change. No write was applied; please try the command again.",
+  resource_limit = "This server's saved state reached its configured size limit. No data was removed; contact an administrator.",
   capacity = "The server economy has reached its current capacity.", busy = "Molly is processing another request. Try again shortly.",
   outcome_unknown = "The outcome could not be confirmed. Check your balance and transaction history before retrying.",
   unavailable = "Economy storage is unavailable.", invalid_store = "Economy storage requires administrator attention." }

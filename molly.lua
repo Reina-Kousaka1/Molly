@@ -25,6 +25,7 @@ local VoiceCommands = require("src.commands.voice")
 local AdminCommands = require("src.commands.admin")
 local GuildStore = require("src.persistence.guild_store")
 local GlobalStore = require("src.persistence.global_store")
+local PreppyStore = require("src.persistence.preppydb_store")
 local Ledger = require("src.economy.ledger")
 local Inventory = require("src.economy.inventory")
 local Shop = require("src.economy.shop")
@@ -81,21 +82,39 @@ if config.discord.guild_members_intent then
   end
   gateway_intents = discord.enums.combine_intents(gateway_intents, discord.enums.INTENTS.GUILD_MEMBERS)
 end
-local driver_loaded, SeaWorldDriver = pcall(require, "src.seaworld.socket_driver")
-if not driver_loaded then logger:error("luvit_transport_unavailable", { dependency = "coro-net" }); os.exit(1) end
 local music_transport_loaded, MusicTransport = pcall(require, "src.music.luvit_transport")
 if not music_transport_loaded then logger:error("luvit_transport_unavailable", { dependency = "coro-http" }); os.exit(1) end
-local driver = config.seaworld.socket and SeaWorldDriver.new({ path = config.seaworld.socket, timeout_ms = config.seaworld.timeout_ms })
-local sea_world = SeaWorldConnector.new({ driver = driver })
+local persistence, store, global_store
+if config.persistence.backend == "seaworld" then
+  local driver_loaded, SeaWorldDriver = pcall(require, "src.seaworld.socket_driver")
+  if not driver_loaded then logger:error("luvit_transport_unavailable", { dependency = "coro-net" }); os.exit(1) end
+  local driver = config.seaworld.socket and SeaWorldDriver.new({ path = config.seaworld.socket, timeout_ms = config.seaworld.timeout_ms })
+  persistence = SeaWorldConnector.new({ driver = driver })
+  store, global_store = GuildStore.new(persistence), GlobalStore.new(persistence)
+else
+  local PreppyConnector = require("src.preppydb.connector")
+  local PreppyService = require("src.persistence.preppydb_service")
+  local preppy, preppy_error = PreppyConnector.new({
+    url = config.persistence.preppydb.url,
+    token = config.persistence.preppydb.token,
+    timeout_ms = config.persistence.preppydb.timeout_ms,
+    max_response_bytes = config.persistence.preppydb.max_response_bytes,
+    async_bridge = true,
+  })
+  if not preppy then logger:error("preppydb_connector_unavailable", { detail = preppy_error or "initialization_failed" }); os.exit(1) end
+  persistence = PreppyService.new(preppy)
+  store = PreppyStore.new(preppy)
+  global_store = store
+end
 local music_options = { configuration_errors = config.music.configuration_errors }
 if #config.music.configuration_errors == 0 and config.music.lavalink_url then music_options.provider = LavalinkClient.new({ url = config.music.lavalink_url, password = config.music.lavalink_password, timeout_ms = config.music.lavalink_timeout_ms, transport = MusicTransport.request }) end
 local music = MusicAdapter.new(music_options)
-local app = App.new({ logger = logger, seaworld = sea_world, music = music })
+local app = App.new({ logger = logger, seaworld = persistence, persistence = persistence,
+  persistence_backend = config.persistence.backend, music = music })
 local commands = CommandRouter.new(logger)
 local metrics = Metrics.new({ clock = function() return uv.now() end })
 metrics:start()
 commands:set_observability(metrics)
-local store, global_store = GuildStore.new(sea_world), GlobalStore.new(sea_world)
 local guild_settings = GuildSettings.new(store)
 local user_settings = UserSettings.new(global_store)
 local content_policy = ContentPolicy.new(guild_settings, { user_settings = user_settings })
@@ -154,7 +173,7 @@ local function terminate(kind)
 end
 AdminCommands.register(commands, {
   owners = config.developers, blacklist = blacklist,
-  developer = Developer.new({ ledger = ledger, store = store, inventory = inventory, metrics = metrics, seaworld = sea_world,
+  developer = Developer.new({ ledger = ledger, store = store, inventory = inventory, seaworld = persistence,
     started_at = function() return app.started_at end }),
   lifecycle = lifecycle, updater = updater, terminate = terminate,
 })
@@ -213,9 +232,12 @@ end)
 process:on("sigint", function() bootstrap:shutdown("SIGINT") end)
 process:on("sigterm", function() bootstrap:shutdown("SIGTERM") end)
 coroutine.wrap(function()
-  sea_world:initialize()
-  local connected = sea_world:connect()
-  if not connected then logger:error("seaworld_preflight_failed", { status = sea_world:get_state().status }); os.exit(1) end
+  persistence:initialize()
+  local connected = persistence:connect()
+  if not connected then logger:error("persistence_preflight_failed", {
+    backend = config.persistence.backend, status = persistence:get_state().status,
+    detail = persistence:get_state().detail,
+  }); os.exit(1) end
   local started = bootstrap:start(config.discord.token)
   if not started then os.exit(1) end
 end)()

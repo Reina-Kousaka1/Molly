@@ -8,22 +8,26 @@ function Health.snapshot(input)
   input = input or {}
   local runtime_ok = type(input.runtime) == "string" and input.runtime ~= ""
   local process_ok = input.running == true
-  local seaworld_status = type(input.seaworld) == "table" and input.seaworld.status or "unavailable"
-  local sea_ok = seaworld_status == "healthy"
+  local backend = input.persistence_backend or "seaworld"
+  local active_persistence = type(input.persistence) == "table" and input.persistence
+    or (type(input.seaworld) == "table" and input.seaworld or {})
+  local persistence_ok = active_persistence.status == "healthy"
+  local sea_ok = backend == "seaworld" and persistence_ok
   local uptime = 0
   if type(input.started_at) == "number" and type(input.now) == "number" then
     uptime = math.max(0, math.floor(input.now - input.started_at))
   end
 
   return {
-    status = process_ok and runtime_ok and input.discord_connected == true and sea_ok and "healthy" or "degraded",
+    status = process_ok and runtime_ok and input.discord_connected == true and persistence_ok and "healthy" or "degraded",
     process = component(process_ok and "healthy" or "unavailable"),
     runtime = component(runtime_ok and "healthy" or "unavailable"),
     discord = component(input.discord_connected == true and "healthy" or "unavailable"),
     seaworld = component(sea_ok and "healthy" or "unavailable"),
-    persistence = component(sea_ok and "healthy" or "degraded"),
-    api_version = sea_ok and input.seaworld.api_version or nil,
-    capabilities = sea_ok and input.seaworld.capabilities or nil,
+    persistence = component(persistence_ok and "healthy" or "degraded"),
+    persistence_backend = backend,
+    api_version = persistence_ok and active_persistence.api_version or nil,
+    capabilities = persistence_ok and active_persistence.capabilities or nil,
     music = type(input.music) == "table" and input.music.status or "unavailable",
     uptime_seconds = uptime,
   }
@@ -45,16 +49,19 @@ local function uptime_text(seconds)
 end
 
 function Health.message(snapshot)
-  local seaworld = title(snapshot.seaworld.status)
-  if snapshot.seaworld.status == "healthy" and type(snapshot.api_version) == "string" then
-    seaworld = seaworld .. " (API " .. snapshot.api_version .. ")"
+  local backend = snapshot.persistence_backend or "seaworld"
+  local active_status = backend == "seaworld" and snapshot.seaworld.status or snapshot.persistence.status
+  local persistence = title(active_status)
+  if active_status == "healthy" and type(snapshot.api_version) == "string" then
+    persistence = persistence .. " (API " .. snapshot.api_version .. ")"
   end
+  local persistence_label = backend == "seaworld" and "SeaWorld" or ("Persistence (" .. backend .. ")")
   return table.concat({
     "Molly Health — " .. title(snapshot.status),
     "Process: " .. title(snapshot.process.status),
     "Runtime: " .. title(snapshot.runtime.status),
     "Discord: " .. title(snapshot.discord.status),
-    "SeaWorld: " .. seaworld,
+    persistence_label .. ": " .. persistence,
     "Persistence: " .. title(snapshot.persistence.status),
     "Music: " .. snapshot.music,
     "Uptime: " .. uptime_text(snapshot.uptime_seconds),

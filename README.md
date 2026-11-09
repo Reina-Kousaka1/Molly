@@ -17,7 +17,7 @@
 
 HIIII BESTIESSS!! 😭💗 I'm KiddyyMolly, your pink-bow-wearing, Sephora-obsessed Discord girlieee!! But don't get distracted by my lip gloss: I do moderation, staff management, economy, music, and serious server operations too, okayyy?!
 
-My little tech glam squad is Lua/Luvit, SeaWorld DB for persistent guild data, Lavalink for the playlists, structured logging for receipts, and Raspberry Pi ARM64 for my cozy little home. She's booked AND busy!! 🎀
+My little tech glam squad is Lua/Luvit, a persistence layer currently backed by SeaWorld DB, Lavalink for the playlists, structured logging for receipts, and Raspberry Pi ARM64 for my cozy little home. She's booked AND busy!! 🎀
 
 > **Glow-up status:** I'm still evolving, bestieee! 💅 These features and contracts describe what's in my repo, but PLEASE check what is actually deployed before assuming a subsystem is live in production. Cute does not mean careless!!
 
@@ -152,6 +152,10 @@ Here are some of my actual config keys. Spell them EXACTLY like this, girlie:
 
 - `MOLLY_DISCORD_TOKEN`
 - `MOLLY_SEAWORLD_SOCKET`
+- `MOLLY_PERSISTENCE_BACKEND` (defaults to `seaworld`)
+- `MOLLY_PREPPYDB_URL` and `MOLLY_PREPPYDB_TOKEN` (only when explicitly selecting PreppyDB)
+- `MOLLY_PREPPYDB_TIMEOUT_MS`
+- `MOLLY_PREPPYDB_MAX_RESPONSE_BYTES`
 - `SEAWORLD_TIMEOUT_MS`
 - `SEAWORLD_RETRY_ATTEMPTS`
 - `MOLLY_LAVALINK_URL`
@@ -180,6 +184,22 @@ Molly
 My connector negotiates the supported API contract and fails closed when transport or config breaks. No imaginary successful writes allowed. Molly should not fabricate successful persistence operations when SeaWorld is unavailable.
 
 Testing with the real service? Use an isolated disposable test database. Production data is NOT your test makeup palette!!
+
+## 🧪 Optional PreppyDB backend
+
+Molly also contains an opt-in PreppyDB HTTP persistence path. The default remains
+SeaWorld, and the selector constructs only one authoritative write backend at
+a time. PreppyDB requires pre-created `molly_guild_state` and
+`molly_global_state` collections and a write-role token. Molly stores a whole
+guild/global state document using a conditional atomic transaction; writes are
+not dual-written, and a failed or uncertain PreppyDB operation never silently
+falls back to SeaWorld. See [the integration contract](docs/preppydb-connector.md)
+for version, size, retry, and migration limitations.
+
+This is integration code, not a production cutover approval. It does not
+migrate deployed data or establish Raspberry Pi capacity, backup/restore
+qualification, or lossless rollback after new PreppyDB writes. Keep the
+production default unchanged until those separate checks are completed.
 
 <p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 

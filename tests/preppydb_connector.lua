@@ -18,6 +18,10 @@ local client = {
     calls[#calls + 1] = { "batch", collection, operations }
     return { applied = #operations }
   end,
+  call = function(_, method, path, body)
+    calls[#calls + 1] = { "call", method, path, body }
+    return { operations = #body.operations, seq = 11 }
+  end,
   delete = function() return nil, { code = "conflict", status = 409 } end,
   call_async = function(_, method, path, body, callback)
     calls[#calls + 1] = { "request", method, path, body }
@@ -32,6 +36,8 @@ assert(connector:get("items", "one").version == 4)
 assert(connector:put("items", "one", { active = false }, 4) == 5)
 assert(calls[2][5] == 4)
 assert(connector:batch("items", { { op = "delete", key = "one" } }).applied == 1)
+assert(connector:transaction({ { op = "put", collection = "items", key = "one", expected_version = 4, value = {} } }).seq == 11)
+assert(calls[4][2] == "POST" and calls[4][3] == "/v1/transactions")
 local result, err = connector:delete("items", "one", 4)
 assert(result == nil and err.code == "conflict" and err.status == 409)
 result, err = connector:find("items", "missing", "x")
@@ -43,8 +49,10 @@ local library = {
     assert(options.url == "http://127.0.0.1:7077")
     return client
   end,
+  json = { encode = function(value) return value == "size" and '"size"' or tostring(value) end },
 }
-assert(Connector.new({ library = library, url = "http://127.0.0.1:7077" }))
+local library_connector = assert(Connector.new({ library = library, url = "http://127.0.0.1:7077" }))
+assert(library_connector:encoded_size("size") == 6)
 local observed
 connector:request("GET", "/v1/version", nil, function(value, request_err)
   assert(request_err == nil)
