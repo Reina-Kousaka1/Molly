@@ -268,7 +268,9 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
   local source_data = {
     ["molly_g_94001"] = { guild = "94001", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} },
     ["molly_g_94002"] = { guild = "94002", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} },
-    ["molly_global_blacklist"] = { entries = { "blocked-user" }, receipts = {} },
+    ["molly_global_blacklist"] = {
+      entries = client_library.json.array({ "blocked-user" }), receipts = {},
+    },
   }
   local source = {}
   function source:query(request)
@@ -280,8 +282,51 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
     source = source, target = connector, source_json = client_library.json,
     target_json = client_library.json, guilds = { "94001", "94002" }, globals = { "blacklist" },
   }
+  local target_keys = {
+    { collection = "molly_guild_state", key = "94001" },
+    { collection = "molly_guild_state", key = "94002" },
+    { collection = "molly_global_state", key = "blacklist" },
+  }
+  local function target_snapshot()
+    local snapshot = {}
+    for _, item in ipairs(target_keys) do
+      local envelope, read_error = connector:get(item.collection, item.key)
+      if envelope then
+        local encoded = client_library.json.encode(envelope)
+        assert(type(encoded) == "string", "could not encode synthetic migration target snapshot")
+        snapshot[#snapshot + 1] = item.collection .. "/" .. item.key .. "=" .. encoded
+      else
+        local code = type(read_error) == "table" and read_error.code or nil
+        assert(code == "not_found", "could not inspect migration target "
+          .. item.collection .. "/" .. item.key .. ": code=" .. tostring(code))
+        snapshot[#snapshot + 1] = item.collection .. "/" .. item.key .. "=<missing>"
+      end
+    end
+    return table.concat(snapshot, "\n")
+  end
+  local before_dry_run = target_snapshot()
   local dry_ok, dry = Migration.run(options)
-  assert(dry_ok and dry.mode == "dry_run" and dry.verified == 0)
+  local dry_summary = type(dry) == "table" and (dry.summary or dry) or {}
+  assert(dry_ok, "migration dry-run failed: code="
+    .. tostring(type(dry) == "table" and dry.code or nil)
+    .. " mode=" .. tostring(dry_summary.mode)
+    .. " verified=" .. tostring(dry_summary.verified))
+  assert(type(dry) == "table", "migration dry-run returned no summary")
+  assert(dry.mode == "dry_run", "migration dry-run returned mode=" .. tostring(dry.mode))
+  assert(dry.verified == 0, "migration dry-run unexpectedly verified " .. tostring(dry.verified) .. " records")
+  local after_dry_run = target_snapshot()
+  assert(after_dry_run == before_dry_run, "migration dry-run changed synthetic target state")
+  local repeated_ok, repeated_dry = Migration.run(options)
+  local repeated_summary = type(repeated_dry) == "table" and (repeated_dry.summary or repeated_dry) or {}
+  assert(repeated_ok, "repeated migration dry-run failed: code="
+    .. tostring(type(repeated_dry) == "table" and repeated_dry.code or nil)
+    .. " mode=" .. tostring(repeated_summary.mode)
+    .. " verified=" .. tostring(repeated_summary.verified))
+  assert(type(repeated_dry) == "table", "repeated migration dry-run returned no summary")
+  assert(repeated_dry.mode == "dry_run", "repeated migration dry-run returned mode=" .. tostring(repeated_dry.mode))
+  assert(repeated_dry.verified == 0, "repeated migration dry-run unexpectedly verified "
+    .. tostring(repeated_dry.verified) .. " records")
+  assert(target_snapshot() == before_dry_run, "repeated migration dry-run changed synthetic target state")
   local missing = connector:get("molly_guild_state", "94001")
   assert(not missing, "dry-run must not create target data")
 
