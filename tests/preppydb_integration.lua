@@ -265,11 +265,22 @@ test("unknown, lost and malformed write acknowledgements fail closed and receipt
 end)
 
 test("manifest migration dry-run, apply, interruption and idempotent resume", function()
+  assert(type(client_library.array) == "function", "PreppyDB JSON array adapter is unavailable")
+  assert(client_library.null ~= nil, "PreppyDB JSON null adapter is unavailable")
+  assert(type(client_library.encode) == "function", "PreppyDB JSON encoder is unavailable")
+  assert(type(client_library.decode) == "function", "PreppyDB JSON decoder is unavailable")
+  local adapter_probe = client_library.array({})
+  local encoded_probe = client_library.encode({ items = adapter_probe, missing = client_library.null })
+  local decoded_ok, decoded_probe = pcall(client_library.decode, encoded_probe)
+  assert(decoded_ok and type(decoded_probe) == "table", "PreppyDB JSON adapter round-trip failed")
+  assert(client_library.is_array(decoded_probe.items), "PreppyDB JSON adapter did not preserve array semantics")
+  assert(decoded_probe.missing == client_library.null, "PreppyDB JSON adapter did not preserve null semantics")
+
   local source_data = {
     ["molly_g_94001"] = { guild = "94001", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} },
     ["molly_g_94002"] = { guild = "94002", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} },
     ["molly_global_blacklist"] = {
-      entries = client_library.json.array({ "blocked-user" }), receipts = {},
+      entries = client_library.array({ "blocked-user" }), receipts = {},
     },
   }
   local source = {}
@@ -279,8 +290,8 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
     return true, { rows = { { id = "synthetic", document = { data = value } } } }
   end
   local options = {
-    source = source, target = connector, source_json = client_library.json,
-    target_json = client_library.json, guilds = { "94001", "94002" }, globals = { "blacklist" },
+    source = source, target = connector, source_json = client_library,
+    target_json = client_library, guilds = { "94001", "94002" }, globals = { "blacklist" },
   }
   local target_keys = {
     { collection = "molly_guild_state", key = "94001" },
@@ -292,7 +303,7 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
     for _, item in ipairs(target_keys) do
       local envelope, read_error = connector:get(item.collection, item.key)
       if envelope then
-        local encoded = client_library.json.encode(envelope)
+        local encoded = client_library.encode(envelope)
         assert(type(encoded) == "string", "could not encode synthetic migration target snapshot")
         snapshot[#snapshot + 1] = item.collection .. "/" .. item.key .. "=" .. encoded
       else
@@ -350,3 +361,4 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
 end)
 
 io.stdout:write("PreppyDB real-server integration: pass\n")
+
