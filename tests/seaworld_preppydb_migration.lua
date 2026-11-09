@@ -81,4 +81,101 @@ local uncertain_ok, uncertain_reason = Migration.run({
 })
 assert(not uncertain_ok and uncertain_reason.code == "outcome_unknown")
 
+-- Durability gate ------------------------------------------------------------
+-- Evidence is only ever borrowed from the destination. Silence is not consent:
+-- a destination that cannot answer is reported as unverifiable, never durable.
+local function memory_target(version_response)
+  local rows, count = {}, 0
+  local store = {}
+  function store:get(collection, key)
+    local row = rows[collection .. "/" .. key]
+    if not row then return nil, { code = "not_found", status = 404 } end
+    return { value = row.value, version = row.version }
+  end
+  function store:transaction(operations)
+    assert(#operations == 1)
+    local operation = operations[1]
+    local location = operation.collection .. "/" .. operation.key
+    if rows[location] then return nil, { code = "conflict", status = 409 } end
+    count = count + 1
+    rows[location] = { value = operation.value, version = 1 }
+    return { operations = 1 }
+  end
+  if version_response == "raising" then
+    store.version = function() error("probe exploded") end
+  elseif version_response ~= nil then
+    store.version = function() return version_response end
+  end
+  return store, function() return count end
+end
+
+local function run_against(store, extra)
+  local run_options = {
+    source = source, target = store, source_json = source_json, target_json = target_json,
+    guilds = { "123" }, globals = {},
+  }
+  for key, value in pairs(extra or {}) do run_options[key] = value end
+  return Migration.run(run_options)
+end
+
+local durable_ok, durable_evidence = Migration.durability(memory_target({ api_version = "1.0.0", sync_mode = "always" }))
+assert(durable_ok and durable_evidence.sync_mode == "always")
+
+local flag_ok, flag_evidence = Migration.durability(memory_target({ durable_writes = true }))
+assert(flag_ok and flag_evidence.detail == "durable_writes")
+
+local nested_ok = Migration.durability(memory_target({ durability = { sync_mode = "always", durable_writes = true } }))
+assert(nested_ok)
+
+local unsynced_ok, unsynced = Migration.durability(memory_target({ sync_mode = "periodic", durable_writes = false }))
+assert(not unsynced_ok and unsynced.code == "not_durable")
+
+local inconsistent_target = memory_target({ sync_mode = "always", durable_writes = false })
+local inconsistent_ok, inconsistent = Migration.durability(inconsistent_target)
+assert(not inconsistent_ok and inconsistent.code == "unverifiable" and inconsistent.detail == "inconsistent_durability")
+
+local silent_ok, silent = Migration.durability(memory_target({ api_version = "1.0.0", engine = "preppydb" }))
+assert(not silent_ok and silent.code == "unverifiable" and silent.detail == "durability_not_reported")
+
+local unreachable_ok, unreachable = Migration.durability({
+  version = function() return nil, { code = "transport_error" } end,
+})
+assert(not unreachable_ok and unreachable.code == "unverifiable" and unreachable.reason == "transport_error")
+
+local raising_ok, raising = Migration.durability(memory_target("raising"))
+assert(not raising_ok and raising.code == "unverifiable" and raising.detail == "version_probe_failed")
+
+-- An apply against unsynced writes is refused before the first insert.
+local unsynced_store, unsynced_writes = memory_target({ sync_mode = "periodic" })
+local refused_ok, refused = run_against(unsynced_store, { apply = true })
+assert(not refused_ok and refused.code == "not_durable" and unsynced_writes() == 0)
+assert(refused.summary.durability == "not_durable" and refused.summary.durable == false)
+
+-- A destination that cannot answer still runs, but its summary says so.
+local quiet_store, quiet_writes = memory_target(nil)
+local quiet_ok, quiet = run_against(quiet_store, { apply = true })
+assert(quiet_ok and quiet.mode == "apply" and quiet_writes() == 1)
+assert(quiet.durability == "unverifiable" and quiet.durable == false)
+
+local proven_store = memory_target({ sync_mode = "always" })
+local proven_ok, proven = run_against(proven_store, { apply = true })
+assert(proven_ok and proven.durability == "durable" and proven.durable == true)
+
+-- Verify-only cutover gate ----------------------------------------------------
+local verified_store, verified_writes = memory_target({ sync_mode = "always" })
+local filled_ok = run_against(verified_store, { apply = true })
+assert(filled_ok)
+
+local gate_ok, gate = run_against(verified_store, { verify_only = true })
+assert(gate_ok and gate.mode == "verify" and gate.verified == 1 and verified_writes() == 1)
+assert(gate.guilds[1].status == "verified")
+
+local empty_store, empty_writes = memory_target({ sync_mode = "always" })
+local open_ok, open = run_against(empty_store, { verify_only = true })
+assert(not open_ok and open.code == "not_migrated" and empty_writes() == 0)
+assert(open.summary.failed.key == "123" and open.summary.mode == "verify")
+
+local ambiguous_ok, ambiguous = run_against(verified_store, { verify_only = true, apply = true })
+assert(not ambiguous_ok and ambiguous.code == "invalid_argument")
+
 print("SeaWorld to PreppyDB migration mapping: pass")

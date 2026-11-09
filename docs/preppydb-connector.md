@@ -97,7 +97,73 @@ establish that the manifest lists every guild and global store. Its unit tests
 use synthetic in-memory connectors only; no production data is read, copied,
 changed, or migrated by this repository work.
 
-There is not yet a qualified end-to-end migration command, restore rehearsal,
-cutover runbook, or reverse migration. After any PreppyDB writes, rollback to
-SeaWorld requires stopping writes and a separately tested reconciliation; it
-is not automatically lossless.
+### Durability gate
+
+Insert-only writes are not the same as durable writes. If the destination
+acknowledges a transaction before it is on disk, a migration can report
+`inserted` and `verified` for records that a host crash would lose. An apply
+therefore probes `/v1/version` first and treats the answer as a three-valued
+gate, never a binary one:
+
+| Probe result | Meaning | Apply behaviour |
+| --- | --- | --- |
+| `durable` | `sync_mode="always"` and/or `durable_writes=true` | proceeds |
+| `not_durable` | `sync_mode` reports `never`/`none`/`off`/`periodic`/`interval`/`batch`, or `durable_writes=false` | aborts with `not_durable` **before the first write** |
+| `unverifiable` | endpoint missing, transport error, unknown or contradictory fields (`inconsistent_durability`) | proceeds, but the summary records `durability="unverifiable"` and `durable=false` |
+
+`Migration.durability(target)` exposes the probe directly. It is deliberately
+strict: contradictory evidence (for example `sync_mode="always"` together with
+`durable_writes=false`) is `unverifiable`, not "probably fine", and silence is
+never reported as durability. A dry run does not probe, because it writes
+nothing.
+
+### Verify-only cutover gate
+
+`verify_only=true` writes nothing and requires every manifest key to already be
+present in the destination and byte-identical to the converted source record.
+The first missing key fails the run with `not_migrated` and reports it as
+`summary.failed = { collection, key, code }`. This is the gate to run
+immediately before flipping `MOLLY_PERSISTENCE_BACKEND`, because it is the only
+step that can distinguish "everything was migrated" from "everything that
+happened to be migrated".
+
+### The gap the manifest cannot close
+
+`PreppyStore` treats a missing guild document as version `0` and writes its
+empty defaults on the first mutation. A guild that was never migrated is
+therefore indistinguishable from a brand-new guild at runtime: after cutover it
+silently starts from empty state instead of failing loudly. Consequences:
+
+- `verify_only` must pass for the *complete* manifest before cutover.
+- The manifest must be derived from the source side (the SeaWorld collections),
+  never from the destination collections; a destination listing proves only
+  what has already been copied.
+- An empty manifest is refused by the CLI, because it would verify nothing.
+
+### Operator command
+
+`ops/preppydb-migrate.lua` is the entry point for the primitive:
+
+```sh
+luvit ops/preppydb-migrate.lua --manifest=manifest.json            # dry run
+luvit ops/preppydb-migrate.lua --manifest=manifest.json --apply    # insert-only
+luvit ops/preppydb-migrate.lua --manifest=manifest.json --verify   # cutover gate
+```
+
+Connection settings come from `--url`/`--token`/`--seaworld-socket` or from
+`MOLLY_PREPPYDB_URL`, `MOLLY_PREPPYDB_TOKEN` and `MOLLY_SEAWORLD_SOCKET`. Exit
+codes are `0` success, `1` migration or verification failure (including
+`not_durable` and `not_migrated`) and `2` an unusable invocation or manifest.
+An apply whose durability is `unverifiable` exits `1` unless the operator passes
+`--allow-unverifiable-durability`, so an unknown durability cannot be mistaken
+for a successful cutover.
+
+The command requires the deployed Luvit runtime, a live SeaWorld socket and a
+reachable PreppyDB. It is not started by Molly and is not run by CI; its
+argument handling, manifest loading, durability refusal, insert path and
+verify gate have been exercised against synthetic in-memory connectors only.
+
+There is not yet a qualified end-to-end migration run against real SeaWorld and
+PreppyDB data, a restore rehearsal, a cutover runbook, or a reverse migration.
+After any PreppyDB writes, rollback to SeaWorld requires stopping writes and a
+separately tested reconciliation; it is not automatically lossless.

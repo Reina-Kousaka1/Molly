@@ -7,7 +7,7 @@ LUAC_BIN=${LUAC_BIN:-luac5.1}
 PYTHON_BIN=${PYTHON_BIN:-python3}
 
 "$LUAC_BIN" -p molly.lua
-find src tests -type f -name '*.lua' -exec "$LUAC_BIN" -p {} +
+find src tests ops -type f -name '*.lua' -exec "$LUAC_BIN" -p {} +
 
 for suite in \
   tests/test.lua \

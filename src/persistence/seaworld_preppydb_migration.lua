@@ -93,17 +93,22 @@ local function source_store(source, collection, key)
   return value
 end
 
-local function ensure_target(target, collection, key, value, target_json, apply, max_document_bytes)
+local function ensure_target(target, collection, key, value, target_json, mode, max_document_bytes)
   local encoded = encode(target_json, value)
   if not encoded then return nil, "serialization_failed" end
   if #encoded > max_document_bytes then return nil, "resource_limit" end
   local current, read_error = target:get(collection, key)
   if current then
     if encode(target_json, current.value) ~= encoded then return nil, "target_conflict" end
+    if mode == "verify" then return "verified" end
     return "already_identical"
   end
   if type(read_error) ~= "table" or read_error.code ~= "not_found" then return nil, "target_unavailable" end
-  if not apply then return "planned" end
+  -- The cutover gate: a verify-only run proves the manifest is already in the
+  -- destination and writes nothing at all. It fails on the first missing key
+  -- instead of reporting a clean bill of health it cannot support.
+  if mode == "verify" then return nil, "not_migrated" end
+  if mode ~= "apply" then return "planned" end
 
   local result, write_error = target:transaction({ {
     op = "put", collection = collection, key = key, expected_version = 0, value = value,
@@ -124,6 +129,67 @@ local function ensure_target(target, collection, key, value, target_json, apply,
   return nil, "write_failed"
 end
 
+-- A migration may only claim success when the destination acknowledges writes
+-- after they are durable. PreppyDB exposes that configuration on /v1/version;
+-- this probe turns it into an explicit answer instead of an assumption.
+local function durability_evidence(version)
+  local durability = type(version.durability) == "table" and version.durability or {}
+  local signals = {}
+  local sync_mode = version.sync_mode or durability.sync_mode
+  local durable_writes = version.durable_writes
+  if durable_writes == nil then durable_writes = durability.durable_writes end
+  if type(durable_writes) == "boolean" then signals[#signals + 1] = durable_writes end
+  if sync_mode ~= nil then
+    local normalized = type(sync_mode) == "string" and sync_mode:lower() or nil
+    if normalized == "always" then
+      signals[#signals + 1] = true
+    elseif normalized == "never" or normalized == "none" or normalized == "off"
+      or normalized == "periodic" or normalized == "interval" or normalized == "batch" then
+      signals[#signals + 1] = false
+    else
+      return "unverifiable", "unknown_sync_mode", sync_mode
+    end
+  end
+  if #signals == 0 then return "unverifiable", "durability_not_reported", sync_mode end
+  local durable, weak = false, false
+  for _, signal in ipairs(signals) do
+    if signal then durable = true else weak = true end
+  end
+  if durable and weak then return "unverifiable", "inconsistent_durability", sync_mode end
+  if weak then return "not_durable", "writes_not_synced", sync_mode end
+  return "durable", "durable_writes", sync_mode
+end
+
+--- Probe a PreppyDB connector for durable-write evidence.
+-- Returns true with evidence, or false with `not_durable` when the server says
+-- writes are not synced, and `unverifiable` when it cannot answer at all. The
+-- three outcomes are deliberately distinct: silence is not agreement.
+function Migration.durability(target)
+  if type(target) ~= "table" or type(target.version) ~= "function" then
+    return false, { code = "unverifiable", detail = "no_version_endpoint" }
+  end
+  local called, version, version_error = pcall(target.version, target)
+  if not called then
+    return false, { code = "unverifiable", detail = "version_probe_failed" }
+  end
+  if type(version) ~= "table" then
+    return false, {
+      code = "unverifiable",
+      detail = "version_unavailable",
+      reason = type(version_error) == "table" and version_error.code or nil,
+    }
+  end
+  local state, detail, sync_mode = durability_evidence(version)
+  if state ~= "durable" then return false, { code = state, detail = detail, sync_mode = sync_mode } end
+  return true, {
+    durability = state,
+    detail = detail,
+    sync_mode = sync_mode,
+    api_version = version.api_version,
+    engine = version.engine,
+  }
+end
+
 function Migration.run(options)
   options = options or {}
   local source, target = options.source, options.target
@@ -137,6 +203,12 @@ function Migration.run(options)
   if options.apply ~= nil and options.apply ~= true and options.apply ~= false then
     return false, { code = "invalid_argument" }
   end
+  if options.verify_only ~= nil and options.verify_only ~= true and options.verify_only ~= false then
+    return false, { code = "invalid_argument" }
+  end
+  if options.verify_only == true and options.apply == true then
+    return false, { code = "invalid_argument" }
+  end
   local max_document_bytes = options.max_document_bytes or 3 * 1024 * 1024
   if type(max_document_bytes) ~= "number" or max_document_bytes < 1024
     or max_document_bytes > 4 * 1024 * 1024 or max_document_bytes % 1 ~= 0 then
@@ -145,18 +217,47 @@ function Migration.run(options)
   local guilds = sorted_unique(options.guilds or {}, valid_guild, MAX_GUILDS)
   local globals = sorted_unique(options.globals or {}, valid_global, MAX_GLOBALS)
   if not guilds or not globals then return false, { code = "invalid_manifest" } end
-  local summary = { mode = options.apply == true and "apply" or "dry_run", guilds = {}, globals = {}, verified = 0 }
+  local mode = options.verify_only == true and "verify" or (options.apply == true and "apply" or "dry_run")
+  local summary = { mode = mode, guilds = {}, globals = {}, verified = 0 }
+
+  -- Durability gate. An apply against a destination that does not sync writes
+  -- to disk is refused before the first insert, because every later "verified"
+  -- line would be an unsupported claim. When the server cannot be asked, that
+  -- fact is carried in the summary rather than being reported as success.
+  local durability_state, durability_detail
+  if mode == "dry_run" then
+    durability_state, durability_detail = "not_checked", nil
+  else
+    local durable, evidence = Migration.durability(target)
+    durability_state = durable and "durable" or (evidence and evidence.code or "unverifiable")
+    durability_detail = evidence and evidence.detail or nil
+    summary.durability = durability_state
+    summary.durability_detail = durability_detail
+    summary.durable = durable == true
+    if mode == "apply" and durability_state == "not_durable" then
+      return false, { code = "not_durable", detail = durability_detail, summary = summary }
+    end
+  end
 
   local function migrate_list(values, kind, collection, report)
     for _, key in ipairs(values) do
       local source_collection = kind == "guild" and ("molly_g_" .. key) or ("molly_global_" .. key)
       local original, source_error = source_store(source, source_collection, key)
-      if not original then return false, source_error end
+      if not original then
+        summary.failed = { key = key, collection = source_collection, code = source_error }
+        return false, source_error
+      end
       local converted, convert_error = convert(original, source_json, target_json, {}, 0)
-      if not converted then return false, convert_error end
+      if not converted then
+        summary.failed = { key = key, collection = source_collection, code = convert_error }
+        return false, convert_error
+      end
       local disposition, target_error = ensure_target(target, collection, key, converted,
-        target_json, options.apply == true, max_document_bytes)
-      if not disposition then return false, target_error end
+        target_json, mode, max_document_bytes)
+      if not disposition then
+        summary.failed = { key = key, collection = collection, code = target_error }
+        return false, target_error
+      end
       report[#report + 1] = { key = key, status = disposition }
       if disposition ~= "planned" then summary.verified = summary.verified + 1 end
     end

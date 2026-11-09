@@ -196,6 +196,12 @@ not dual-written, and a failed or uncertain PreppyDB operation never silently
 falls back to SeaWorld. See [the integration contract](docs/preppydb-connector.md)
 for version, size, retry, and migration limitations.
 
+`ops/preppydb-migrate.lua` is the operator command for the explicit-manifest
+migration: dry run by default, `--apply` for insert-only writes, and `--verify`
+as the cutover gate that fails on the first key missing from the destination. An
+apply is refused when PreppyDB reports unsynced writes and is never reported as
+success when its durability cannot be established.
+
 This is integration code, not a production cutover approval. It does not
 migrate deployed data or establish Raspberry Pi capacity, backup/restore
 qualification, or lossless rollback after new PreppyDB writes. Keep the
