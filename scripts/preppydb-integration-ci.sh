@@ -81,7 +81,7 @@ curl --fail --silent --show-error -X POST "$BASE_URL/v1/collections" \
 
 export PREPPYDB_URL="$BASE_URL"
 export PREPPYDB_TOKEN="$TOKEN"
-"$LUVIT_BIN" tests/preppydb_integration.lua
+"$LUVIT_BIN" tests/preppydb_luvit_entry.lua
 
 echo "Terminating the isolated PreppyDB server with SIGKILL after acknowledged writes."
 kill -KILL "$SERVER_PID"
