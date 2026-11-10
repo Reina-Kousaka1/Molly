@@ -2,8 +2,8 @@
   PreppyDB Lua client — Lua 5.1+ / LuaJIT / Luvit.
 
   Self-contained: ships its own JSON codec and needs no third-party modules.
-  The only platform-specific piece is the transport; the default one uses the
-  `http` module that luvit provides. Anything else (a test double, a coroutine
+  The only platform-specific piece is the transport; the default one uses Molly's
+  single-request Luvit transport. Anything else (a test double, a coroutine
   scheduler, LuaSocket) can be injected with `options.transport`.
 
   Usage (luvit):
@@ -426,64 +426,13 @@ end
 
 preppydb.parse_url = parse_url
 
---- Default transport: luvit's `http` module.
+--- Default transport: Molly's non-pooled Luvit transport.
 local function luvit_transport()
-  local ok, http = pcall(require, "http")
-  if not ok then
-    return nil, "the luvit 'http' module is not available; pass options.transport "
-      .. "(see clients/luvit/README.md): " .. tostring(http)
+  local ok, transport = pcall(require, "src.preppydb.luvit_transport")
+  if not ok or type(transport) ~= "table" or type(transport.request) ~= "function" then
+    return nil, "Molly's Luvit transport is unavailable"
   end
-  return function(request, callback)
-    local finished = false
-    local function finish(status, body, headers)
-      if finished then return end
-      finished = true
-      callback(status, body, headers or {})
-    end
-    -- request = { method, url, headers, body, timeout }
-    local http_options = http.parseUrl(request.url)
-    http_options.method = request.method
-    http_options.headers = request.headers
-    local outgoing = http.request(http_options, function(response)
-      local status = tonumber(response.statusCode) or 0
-      local chunks = {}
-      local size = 0
-      local limit = request.max_response_bytes
-      local headers = response.headers or {}
-      local declared = headers["content-length"] or headers["Content-Length"]
-      local function reject(message)
-        chunks = {}
-        finish(nil, message, {})
-        if type(response.destroy) == "function" then pcall(response.destroy, response) end
-      end
-      if declared ~= nil and (type(declared) ~= "string" or not declared:match("^%d+$") or not tonumber(declared) or tonumber(declared) > limit) then
-        reject("invalid or oversized response Content-Length")
-        return
-      end
-      response:on("data", function(chunk)
-        if finished then return end
-        size = size + #chunk
-        if size > limit then reject("response body exceeds configured limit"); return end
-        chunks[#chunks + 1] = chunk
-      end)
-      response:on("end", function()
-        if declared and size ~= tonumber(declared) then reject("response Content-Length mismatch"); return end
-        finish(status, table.concat(chunks), headers)
-      end)
-      response:on("error", function(err) reject("response stream error: " .. tostring(err)) end)
-    end)
-    outgoing:on("error", function(err)
-      finish(nil, tostring(err), {})
-    end)
-    if request.timeout_ms then
-      outgoing:setTimeout(request.timeout_ms, function()
-        finish(nil, "request timed out", {})
-        outgoing:destroy()
-      end)
-    end
-    outgoing:done(request.body)
-    return nil
-  end
+  return transport.request
 end
 
 -------------------------------------------------------------------------- Client
