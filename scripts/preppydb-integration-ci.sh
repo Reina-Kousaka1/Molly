@@ -77,6 +77,9 @@ curl --fail --silent --show-error -X POST "$BASE_URL/v1/collections" \
   --data '{"name":"molly_guild_state"}' >/dev/null
 curl --fail --silent --show-error -X POST "$BASE_URL/v1/collections" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"name":"molly_guild_registry"}' >/dev/null
+curl --fail --silent --show-error -X POST "$BASE_URL/v1/collections" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   --data '{"name":"molly_global_state"}' >/dev/null
 
 export PREPPYDB_URL="$BASE_URL"

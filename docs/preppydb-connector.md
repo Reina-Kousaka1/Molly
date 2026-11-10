@@ -17,10 +17,11 @@ The PreppyDB path requires:
 - `MOLLY_PERSISTENCE_BACKEND=preppydb`;
 - `MOLLY_PREPPYDB_URL` using the client's supported private `http://` transport;
 - `MOLLY_PREPPYDB_TOKEN` with PreppyDB `write` or `admin` role;
-- existing collections `molly_guild_state` and `molly_global_state`.
+- existing collections `molly_guild_state`, `molly_guild_registry` and
+  `molly_global_state`.
 
 Molly does not create collections automatically. Startup checks readiness,
-PreppyDB API version `1.0.0`, token role, and both collections before connecting
+PreppyDB API version `1.0.0`, token role, and all three collections before connecting
 the Discord client. Missing or incompatible setup fails closed. The bearer
 token is read only from the environment and is not logged. The current client
 does not provide TLS; keep it on loopback or a trusted private network and do
@@ -39,10 +40,17 @@ write.
 ## Atomic state updates
 
 Guild state uses one document per guild in the shared `molly_guild_state`
-collection, with the decimal guild ID as its key. Global state uses one
-document per existing global store name in `molly_global_state`. Sharing two
-collections avoids creating a collection for every guild and preserves guild
-isolation at the document-key boundary.
+collection, with the decimal guild ID as its key. A second document in
+`molly_guild_registry` marks the guild as `migrated` or `new_guild`; a new
+guild's state and registry entry are inserted together in one CAS transaction.
+An ordinary command never creates missing state. No registry entry means
+`not_migrated`; a registered guild without its state document means
+`missing_document`; malformed or mismatched records fail as `invalid_store`.
+New-guild creation is available only through an explicit provisioning call.
+
+Global state uses one document per existing global store name in
+`molly_global_state`. The shared collections avoid creating a collection for
+every guild and preserve guild isolation at the document-key boundary.
 
 For a changed state, Molly reads the document version, runs the existing store
 callback locally, then submits one `POST /v1/transactions` containing one
@@ -153,10 +161,9 @@ luvit ops/preppydb-migrate.lua --manifest=manifest.json --verify   # cutover gat
 Connection settings come from `--url`/`--token`/`--seaworld-socket` or from
 `MOLLY_PREPPYDB_URL`, `MOLLY_PREPPYDB_TOKEN` and `MOLLY_SEAWORLD_SOCKET`. Exit
 codes are `0` success, `1` migration or verification failure (including
-`not_durable` and `not_migrated`) and `2` an unusable invocation or manifest.
-An apply whose durability is `unverifiable` exits `1` unless the operator passes
-`--allow-unverifiable-durability`, so an unknown durability cannot be mistaken
-for a successful cutover.
+`not_durable`, `durability_unverifiable` and `not_migrated`) and `2` an unusable
+invocation or manifest. An apply requires affirmative durable-write evidence;
+there is no override for missing or contradictory durability information.
 
 The command requires the deployed Luvit runtime, a live SeaWorld socket and a
 reachable PreppyDB. It is not started by Molly and is not run by CI; its

@@ -15,18 +15,31 @@ function connector:encoded_size(value)
   return #tostring(value)
 end
 function connector:transaction(operations)
-  assert(#operations == 1)
-  local op = operations[1]
-  local slot = op.collection .. "/" .. op.key
-  local previous = rows[slot]
-  local actual = previous and previous.version or 0
-  if actual ~= op.expected_version then return nil, { code = "conflict", status = 409 } end
-  rows[slot] = { value = op.value, version = actual + 1 }
-  commits[#commits + 1] = { op = op, version = actual + 1 }
-  return { operations = 1 }
+  local pending = {}
+  for _, op in ipairs(operations) do
+    local slot = op.collection .. "/" .. op.key
+    local previous = rows[slot]
+    local actual = previous and previous.version or 0
+    if actual ~= op.expected_version then return nil, { code = "conflict", status = 409 } end
+    pending[#pending + 1] = { slot = slot, op = op, version = actual + 1 }
+  end
+  for _, item in ipairs(pending) do
+    rows[item.slot] = { value = item.op.value, version = item.version }
+  end
+  commits[#commits + 1] = operations
+  return { operations = #operations }
 end
 
 local store = Store.new(connector)
+local missing_called = false
+local missing_ok, missing_reason = store:run("123", function()
+  missing_called = true
+  return true, "must-not-run", true
+end)
+assert(not missing_ok and missing_reason == "not_migrated" and not missing_called and #commits == 0)
+local provisioned, provision_reason = store:provision_new_guild("123")
+assert(provisioned and provision_reason == "created")
+assert(rows["molly_guild_registry/123"].value.status == "new_guild")
 local ok, result = store:run("123", function(data)
   data.accounts["42"] = { wallet = 50, bank = 0 }
   data.journal[1] = { id = "r1", amount = 50 }
@@ -34,8 +47,8 @@ local ok, result = store:run("123", function(data)
   return true, "credited", true
 end)
 assert(ok and result == "credited")
-assert(#commits == 1 and commits[1].op.expected_version == 0)
-assert(commits[1].op.collection == "molly_guild_state" and commits[1].op.key == "123")
+assert(#commits == 2 and commits[1][1].expected_version == 0)
+assert(commits[1][1].collection == "molly_guild_state" and commits[1][1].key == "123")
 assert(rows["molly_guild_state/123"].value.accounts["42"].wallet == 50)
 
 ok, result = store:run("123", function(data)
@@ -44,8 +57,9 @@ ok, result = store:run("123", function(data)
   return true, "updated", true
 end)
 assert(ok and result == "updated")
-assert(commits[2].op.expected_version == 1 and rows["molly_guild_state/123"].version == 2)
+assert(commits[3][1].expected_version == 2 and rows["molly_guild_state/123"].version == 3)
 
+assert(store:provision_new_guild("456"))
 local before = #commits
 local other_ok, other_result = store:run("456", function(data)
   data.accounts.user = { wallet = 5, bank = 0 }
@@ -71,7 +85,13 @@ local after_restart, restart_result = restarted_ledger:change("123", "42", "9001
 assert(after_restart and restart_result.wallet == payment.wallet and #commits == after_payment)
 
 local stale = Store.new({
-  get = function() return { value = { guild = "123", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} }, version = 8 } end,
+  get = function(_, collection)
+    if collection == "molly_guild_registry" then
+      return { value = { guild = "123", version = 1, status = "migrated" }, version = 1 }
+    end
+    return { value = { guild = "123", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {},
+      _molly_preppydb_state = { version = 1, origin = "migrated" } }, version = 8 }
+  end,
   encoded_size = function() return 128 end,
   transaction = function(_, operations)
     assert(operations[1].expected_version == 8)
@@ -92,7 +112,13 @@ end)
 assert(not stopped and reason == "insufficient" and #commits == before)
 
 local too_large = Store.new({
-  get = function() return { value = { guild = "9", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {} }, version = 1 } end,
+  get = function(_, collection)
+    if collection == "molly_guild_registry" then
+      return { value = { guild = "9", version = 1, status = "migrated" }, version = 1 }
+    end
+    return { value = { guild = "9", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {},
+      _molly_preppydb_state = { version = 1, origin = "migrated" } }, version = 1 }
+  end,
   encoded_size = function() return 4097 end,
   transaction = function() error("must not send oversized write") end,
 }, { max_document_bytes = 4096 })
@@ -103,7 +129,13 @@ end)
 assert(not large_ok and large_reason == "resource_limit")
 
 local unknown = Store.new({
-  get = function() return nil, { code = "not_found", status = 404 } end,
+  get = function(_, collection)
+    if collection == "molly_guild_registry" then
+      return { value = { guild = "99", version = 1, status = "migrated" }, version = 1 }
+    end
+    return { value = { guild = "99", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {},
+      _molly_preppydb_state = { version = 1, origin = "migrated" } }, version = 1 }
+  end,
   encoded_size = function() return 32 end,
   transaction = function() return nil, { code = "transport_error", retryable = true } end,
 })
@@ -114,7 +146,13 @@ end)
 assert(not unknown_ok and unknown_reason == "outcome_unknown")
 
 local malformed_ack = Store.new({
-  get = function() return nil, { code = "not_found", status = 404 } end,
+  get = function(_, collection)
+    if collection == "molly_guild_registry" then
+      return { value = { guild = "98", version = 1, status = "migrated" }, version = 1 }
+    end
+    return { value = { guild = "98", accounts = {}, cases = {}, staff = {}, journal = {}, receipts = {},
+      _molly_preppydb_state = { version = 1, origin = "migrated" } }, version = 1 }
+  end,
   encoded_size = function() return 32 end,
   transaction = function() return nil, { code = "invalid_response", status = 200 } end,
 })
@@ -125,12 +163,27 @@ end)
 assert(not malformed_ok and malformed_reason == "outcome_unknown",
   "a malformed success response cannot prove the transaction did not commit")
 
+local missing_state = Store.new({
+  get = function(_, collection)
+    if collection == "molly_guild_registry" then
+      return { value = { guild = "97", version = 1, status = "migrated" }, version = 1 }
+    end
+    return nil, { code = "not_found", status = 404 }
+  end,
+  encoded_size = function() return 32 end,
+  transaction = function() error("a registered but missing state must never be recreated") end,
+})
+local missing_state_ok, missing_state_reason = missing_state:run("97", function()
+  return true, "must-not-run", true
+end)
+assert(not missing_state_ok and missing_state_reason == "missing_document")
+
 local status_connector = {
   health = function() return { status = "ok" } end,
   ready = function() return { ready = true } end,
   version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "preppydb" } end,
   whoami = function() return { roles = { "write" } } end,
-  collections = function() return { "molly_guild_state", "molly_global_state" } end,
+  collections = function() return { "molly_guild_state", "molly_guild_registry", "molly_global_state" } end,
 }
 local service = Service.new(status_connector)
 assert(service:connect())
@@ -139,7 +192,7 @@ assert(service:health().status == "healthy")
 status_connector.collections = function() return { "molly_guild_state" } end
 local missing_ok, missing_reason = service:connect()
 assert(not missing_ok and missing_reason == "required_collection_missing")
-status_connector.collections = function() return { "molly_guild_state", "molly_global_state" } end
+status_connector.collections = function() return { "molly_guild_state", "molly_guild_registry", "molly_global_state" } end
 status_connector.whoami = function() return { roles = { "read" } } end
 local role_ok, role_reason = service:connect()
 assert(not role_ok and role_reason == "write_role_required")

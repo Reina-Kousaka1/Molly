@@ -37,10 +37,6 @@ options:
   --token=<token>        PreppyDB bearer token (env MOLLY_PREPPYDB_TOKEN)
   --seaworld-socket=<p>  SeaWorld unix socket (env MOLLY_SEAWORLD_SOCKET)
   --timeout-ms=<n>       request timeout (env MOLLY_PREPPYDB_TIMEOUT_MS, default 3000)
-  --allow-unverifiable-durability
-                         accept an apply whose destination does not report its
-                         write-durability configuration; without this flag such
-                         an apply exits 1 instead of claiming success
   --help                 this text
 
 exit codes: 0 success, 1 migration/verification failure, 2 unusable invocation
@@ -63,7 +59,6 @@ local FLAGS_WITH_VALUE = {
 }
 local FLAGS_WITHOUT_VALUE = {
   apply = true, verify = true, ["dry-run"] = true, help = true,
-  ["allow-unverifiable-durability"] = true,
 }
 
 local function parse_arguments(argv)
@@ -315,16 +310,10 @@ local function main(argv)
   print_entries("guild ", report.guilds)
   print_entries("global", report.globals)
 
-  -- Silence is not agreement. An apply that could not establish durability has
-  -- migrated bytes but cannot support a cutover claim, so it is not exit 0.
-  if report.mode == "apply" and report.durability == "unverifiable" then
-    if parsed["allow-unverifiable-durability"] then
-      io.stderr:write("preppydb-migrate: destination durability is unverifiable; "
-        .. "continuing because --allow-unverifiable-durability was passed\n")
-      return EXIT_OK
-    end
-    io.stderr:write("preppydb-migrate: destination durability is unverifiable, so this apply "
-      .. "is not reported as success; pass --allow-unverifiable-durability to accept that risk\n")
+  -- Migration writes require affirmative durability evidence; no override exists.
+  if report.mode == "apply" and report.durability ~= "durable" then
+    io.stderr:write("preppydb-migrate: destination durability is not proven; "
+      .. "this apply is not reported as success\n")
     return EXIT_FAILED
   end
   return EXIT_OK

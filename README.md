@@ -189,8 +189,8 @@ Testing with the real service? Use an isolated disposable test database. Product
 
 Molly also contains an opt-in PreppyDB HTTP persistence path. The default remains
 SeaWorld, and the selector constructs only one authoritative write backend at
-a time. PreppyDB requires pre-created `molly_guild_state` and
-`molly_global_state` collections and a write-role token. Molly stores a whole
+a time. PreppyDB requires pre-created `molly_guild_state`,
+`molly_guild_registry` and `molly_global_state` collections and a write-role token. Molly stores a whole
 guild/global state document using a conditional atomic transaction; writes are
 not dual-written, and a failed or uncertain PreppyDB operation never silently
 falls back to SeaWorld. See [the integration contract](docs/preppydb-connector.md)
@@ -199,8 +199,8 @@ for version, size, retry, and migration limitations.
 `ops/preppydb-migrate.lua` is the operator command for the explicit-manifest
 migration: dry run by default, `--apply` for insert-only writes, and `--verify`
 as the cutover gate that fails on the first key missing from the destination. An
-apply is refused when PreppyDB reports unsynced writes and is never reported as
-success when its durability cannot be established.
+apply is refused unless PreppyDB affirmatively reports synced writes. An absent
+or unregistered guild is never initialized by an ordinary command.
 
 This is integration code, not a production cutover approval. It does not
 migrate deployed data or establish Raspberry Pi capacity, backup/restore

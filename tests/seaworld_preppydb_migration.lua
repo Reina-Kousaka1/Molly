@@ -20,19 +20,24 @@ function source:query(query) return true, sources[query.collection] end
 
 local target_rows, writes = {}, 0
 local target = {}
+function target:version() return { api_version = "1.0.0", sync_mode = "always" } end
 function target:get(collection, key)
   local row = target_rows[collection .. "/" .. key]
   if not row then return nil, { code = "not_found", status = 404 } end
   return { value = row.value, version = row.version }
 end
 function target:transaction(operations)
-  assert(#operations == 1)
-  local operation = operations[1]
-  local location = operation.collection .. "/" .. operation.key
-  if target_rows[location] then return nil, { code = "conflict", status = 409 } end
+  local pending = {}
+  for _, operation in ipairs(operations) do
+    local location = operation.collection .. "/" .. operation.key
+    if target_rows[location] then return nil, { code = "conflict", status = 409 } end
+    pending[#pending + 1] = { location = location, operation = operation }
+  end
   writes = writes + 1
-  target_rows[location] = { value = operation.value, version = 1 }
-  return { operations = 1 }
+  for _, item in ipairs(pending) do
+    target_rows[item.location] = { value = item.operation.value, version = 1 }
+  end
+  return { operations = #operations }
 end
 
 local options = {
@@ -49,6 +54,8 @@ ok, report = Migration.run(options)
 assert(ok and report.mode == "apply" and report.verified == 2 and writes == 2)
 local guild = target_rows["molly_guild_state/123"].value
 assert(guild.accounts.u.note == target_json.null)
+assert(guild._molly_preppydb_state.origin == "migrated")
+assert(target_rows["molly_guild_registry/123"].value.status == "migrated")
 assert(getmetatable(target_rows["molly_global_state/lifecycle"].value.receipts).__jsontype == "array")
 
 ok, report = Migration.run(options)
@@ -62,6 +69,7 @@ local invalid_ok, invalid_reason = Migration.run(invalid)
 assert(not invalid_ok and invalid_reason.code == "invalid_manifest")
 
 local conflicting_target = {
+  version = function() return { sync_mode = "always" } end,
   get = function() return { value = { guild = "123", accounts = { u = { wallet = 999 } } }, version = 1 } end,
   transaction = function() error("must not overwrite existing data") end,
 }
@@ -72,6 +80,7 @@ local conflict_ok, conflict_reason = Migration.run({
 assert(not conflict_ok and conflict_reason.code == "target_conflict")
 
 local uncertain_target = {
+  version = function() return { sync_mode = "always" } end,
   get = function() return nil, { code = "not_found", status = 404 } end,
   transaction = function() return nil, { code = "transport_error" } end,
 }
@@ -93,13 +102,17 @@ local function memory_target(version_response)
     return { value = row.value, version = row.version }
   end
   function store:transaction(operations)
-    assert(#operations == 1)
-    local operation = operations[1]
-    local location = operation.collection .. "/" .. operation.key
-    if rows[location] then return nil, { code = "conflict", status = 409 } end
+    local pending = {}
+    for _, operation in ipairs(operations) do
+      local location = operation.collection .. "/" .. operation.key
+      if rows[location] then return nil, { code = "conflict", status = 409 } end
+      pending[#pending + 1] = { location = location, operation = operation }
+    end
     count = count + 1
-    rows[location] = { value = operation.value, version = 1 }
-    return { operations = 1 }
+    for _, item in ipairs(pending) do
+      rows[item.location] = { value = item.operation.value, version = 1 }
+    end
+    return { operations = #operations }
   end
   if version_response == "raising" then
     store.version = function() error("probe exploded") end
@@ -154,8 +167,8 @@ assert(refused.summary.durability == "not_durable" and refused.summary.durable =
 -- A destination that cannot answer still runs, but its summary says so.
 local quiet_store, quiet_writes = memory_target(nil)
 local quiet_ok, quiet = run_against(quiet_store, { apply = true })
-assert(quiet_ok and quiet.mode == "apply" and quiet_writes() == 1)
-assert(quiet.durability == "unverifiable" and quiet.durable == false)
+assert(not quiet_ok and quiet.code == "durability_unverifiable" and quiet_writes() == 0)
+assert(quiet.summary.durability == "unverifiable" and quiet.summary.durable == false)
 
 local proven_store = memory_target({ sync_mode = "always" })
 local proven_ok, proven = run_against(proven_store, { apply = true })

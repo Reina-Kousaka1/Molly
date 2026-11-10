@@ -99,6 +99,8 @@ test("PreppyDB health, readiness, API version, role and collections preflight", 
 end)
 
 test("Molly guild/global store read, write and multi-guild isolation", function()
+  assert(store:provision_new_guild("91001"))
+  assert(store:provision_new_guild("91002"))
   local ok, result = store:run("91001", function(data)
     data.accounts["101"] = { wallet = 25, bank = 0 }
     return true, "created", true
@@ -303,7 +305,9 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
   }
   local target_keys = {
     { collection = "molly_guild_state", key = "94001" },
+    { collection = "molly_guild_registry", key = "94001" },
     { collection = "molly_guild_state", key = "94002" },
+    { collection = "molly_guild_registry", key = "94002" },
     { collection = "molly_global_state", key = "blacklist" },
   }
   local function target_snapshot()

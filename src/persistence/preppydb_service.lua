@@ -11,7 +11,9 @@ function Service.new(connector, required_collections)
   assert(type(connector) == "table", "PreppyDB connector is required")
   return setmetatable({
     connector = connector,
-    required_collections = required_collections or { "molly_guild_state", "molly_global_state" },
+    required_collections = required_collections or {
+      "molly_guild_state", "molly_guild_registry", "molly_global_state",
+    },
     current = state("unavailable", "not_initialized"),
   }, Service)
 end

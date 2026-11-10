@@ -2,7 +2,7 @@ name: PreppyDB isolated integration
 
 on:
   push:
-    branches: [feature/preppydb-persistence]
+    branches: [main, feature/preppydb-persistence]
   pull_request:
     branches: [main]
   workflow_dispatch:
