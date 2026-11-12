@@ -211,16 +211,18 @@ production default unchanged until those separate checks are completed.
 
 Molly also carries a **prepared, opt-in Personality Engine V1** (integration
 phase): a provider-agnostic core with an Ollama HTTP adapter for a local text
-model and a PreppyDB memory provider. It is **disabled by default**
-(`MOLLY_PERSONALITY_ENGINE_ENABLED=false`), **not bound to any Discord event**,
-and **never auto-replies or persists conversation data**. Corrupted or missing
-configuration keeps the engine off and never stops Molly. SeaWorld stays the
-authoritative database for all productive functions.
+model and a prepared PreppyDB memory provider. It is **disabled by default**
+(`MOLLY_PERSONALITY_ENGINE_ENABLED=false`). When explicitly enabled, the
+Discord bridge responds only to direct mentions; it ignores bots, webhooks,
+commands, duplicates, cooldown violations and excess parallel requests. Model
+output cannot invoke commands or change economy, moderation or database state.
+Conversation data is not persisted. Corrupted configuration keeps the engine
+off and never stops Molly. SeaWorld stays authoritative for productive data.
 
 See [the integration architecture](docs/personality-engine-v1.md) for module
 boundaries, limits, the error model, memory-provider preparation and the
-activation plan. Nothing in this state establishes production readiness for
-automatic personality replies.
+activation and private-LAN test instructions. This does not establish
+production or Raspberry Pi readiness.
 
 <p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 

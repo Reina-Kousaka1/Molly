@@ -47,6 +47,7 @@ local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
 local Personality = require("src.personality.engine")
+local PersonalityDiscordBridge = require("src.personality.discord_bridge")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local SettingsCommands = require("src.commands.settings")
@@ -117,6 +118,7 @@ local music = MusicAdapter.new(music_options)
 if #config.personality.engine.configuration_errors > 0 then
   logger:error("personality_engine_config_invalid", { variables = table.concat(config.personality.engine.configuration_errors, ",") })
 end
+local ollama_engine, ollama_bridge
 if config.personality.engine.enabled then
   local Ollama = require("src.personality.ollama")
   local EngineV1 = require("src.personality.llm_engine")
@@ -129,13 +131,20 @@ if config.personality.engine.enabled then
     transport = transport_loaded and OllamaTransport.request or nil,
   })
   if adapter then
-    local engine = EngineV1.new({ enabled = true, provider = adapter, provider_name = "ollama", logger = logger })
-    local status = engine:status()
+    ollama_engine = EngineV1.new({ enabled = true, provider = adapter, provider_name = "ollama", logger = logger })
+    local status = ollama_engine:status()
     logger:info("personality_engine_prepared", {
       enabled = status.enabled, ready = status.ready, provider = status.provider,
       model = config.personality.engine.ollama.model,
       bound_to_discord = status.bound_to_discord, memory = status.memory,
     })
+    ollama_bridge = PersonalityDiscordBridge.new({ enabled = status.ready, engine = ollama_engine,
+      logger = logger, cooldown_seconds = 30, max_parallel = 2,
+      send = function(channel, message)
+        local rest = bootstrap and bootstrap.bot and bootstrap.bot.client and bootstrap.bot.client.rest
+        if not rest or type(rest.send_message) ~= "function" then return false end
+        return rest:send_message(channel, { content = message })
+      end })
   else
     logger:error("personality_engine_unavailable", { detail = tostring(adapter_error) })
   end
@@ -219,6 +228,11 @@ local function bind_client_events(client)
   client:on("guild_create", function(guild) dynamic_voice:on_guild_create(guild); music_panel:recover(guild.id) end)
   if bootstrap.bot and type(bootstrap.bot.on_message) == "function" then
     bootstrap.bot:on_message(function(message)
+      if ollama_bridge and ollama_bridge:matches(message) then
+        local handled, reason = pcall(ollama_bridge.on_message, ollama_bridge, message)
+        if not handled then logger:warn("personality_ollama_event_failed", { detail = "handler_error" }) end
+        return
+      end
       local ok, reason = pcall(personality.observe, personality, message)
       if not ok then logger:warn("personality_observe_failed", { detail = "handler_error" }) end
     end)
@@ -249,6 +263,7 @@ bootstrap.bot:on("ready", function()
   local client, user = bootstrap.bot.client, bootstrap.bot.user
   if not client or not user or not user.id then return end
   personality.bot_id = user.id
+  if ollama_bridge then ollama_bridge:set_bot_id(user.id) end
   music_manager:set_discord_client(client, user.id); dynamic_voice:set_runtime(client.rest, client, user.id); music_panel:set_bot(client, music_manager); music_panel:register_interactions(bootstrap.bot, music_manager)
   local started, reason = music_manager:start(user.id); if not started then logger:warn("music_gateway_unavailable", { detail = reason or "not_configured" }) end
   local pending_ok, marker = lifecycle:pending()
