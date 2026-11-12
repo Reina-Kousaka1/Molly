@@ -39,7 +39,8 @@ test("only direct user mentions are accepted; bots and webhooks ignored", functi
   assert(not bridge:on_message(message("hello Molly")))
   assert(not bridge:on_message(message("hi <@99>", { author = { id = "31", bot = true } })))
   assert(not bridge:on_message(message("hi <@99>", { webhook_id = "44" })))
-  assert(not bridge:on_message(message("hi <@99>", { guild_id = nil })))
+  local dm = message("hi <@99>"); dm.guild_id = nil
+  assert(not bridge:on_message(dm))
   assert(bridge:on_message(message("hi <@!99>")))
 end)
 test("cooldown and duplicate in-flight IDs constrain repeated requests", function()
@@ -77,6 +78,15 @@ test("successful mock response sends one bounded reply", function()
   assert(bridge:on_message(message("<@99> hi")))
   queue[1]()
   assert(#sent == 1 and sent[1].channel == "20" and #sent[1].content <= 600)
+end)
+test("Discord send failures release capacity and do not escape the bridge", function()
+  local queue, warnings = {}, 0
+  local bridge = Bridge.new({ enabled = true, bot_id = "99", engine = { generate = function() return "reply" end },
+    spawn = function(fn) queue[#queue + 1] = fn end, send = function() return false end,
+    logger = { warn = function() warnings = warnings + 1 end } })
+  assert(bridge:on_message(message("<@99> hello")))
+  queue[1]()
+  assert(bridge.parallel == 0 and warnings == 1)
 end)
 io.write(string.format("personality Discord bridge: %d tests, %d failures\n", passed + failed, failed))
 os.exit(failed == 0 and 0 or 1)

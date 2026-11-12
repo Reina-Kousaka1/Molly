@@ -52,8 +52,10 @@ function Bridge:on_message(message)
   local spawned = pcall(self.spawn, function()
     local called, reply = pcall(self.engine.generate, self.engine, { content = content })
     if called and type(reply) == "string" and reply ~= "" and self.send then
-      local sent = pcall(self.send, message.channel_id, reply)
-      if not sent and self.logger then pcall(self.logger.warn, self.logger, "personality_discord_send_failed", { detail = "send_failed" }) end
+      local sent, accepted = pcall(self.send, message.channel_id, reply)
+      if (not sent or accepted == false) and self.logger then
+        pcall(self.logger.warn, self.logger, "personality_discord_send_failed", { detail = "send_failed" })
+      end
     elseif (not called or reply == nil) and self.logger then
       pcall(self.logger.warn, self.logger, "personality_discord_generation_failed", { detail = "provider_unavailable" })
     end
