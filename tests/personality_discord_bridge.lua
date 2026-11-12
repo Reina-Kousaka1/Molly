@@ -22,11 +22,12 @@ local function setup(options)
     return "A safe Molly reply 💗"
   end }
   local bridge = Bridge.new({ enabled = options.enabled ~= false, bot_id = "99", engine = engine,
-    clock = function() return options.now or 100 end,
+    clock = options.clock or function() return options.now or 100 end,
     is_prefix_command = options.is_prefix_command,
     spawn = options.spawn or function(fn) queue[#queue + 1] = fn end,
     send = function(channel, content) sent[#sent + 1] = { channel = channel, content = content }; return true end,
-    cooldown_seconds = 30, max_parallel = 2, max_cooldown_entries = 10 })
+    cooldown_seconds = 30, max_parallel = 2, max_cooldown_entries = 10,
+    recent_message_ttl = options.recent_message_ttl, max_recent_messages = options.max_recent_messages })
   return bridge, engine, queue, sent
 end
 
@@ -53,6 +54,28 @@ test("cooldown and duplicate in-flight IDs constrain repeated requests", functio
   assert(engine.calls == 0 and #queue == 1)
   queue[1]()
   assert(bridge.parallel == 0)
+end)
+test("completed Discord message IDs remain deduplicated after the user cooldown", function()
+  local now = 100
+  local bridge, engine, queue = setup({ clock = function() return now end })
+  local original = message("<@99> hello", { id = "1001" })
+  assert(bridge:on_message(original)); queue[1]()
+  now = now + 31
+  local handled, reason = bridge:on_message(original)
+  assert(not handled and reason == "duplicate")
+  assert(engine.calls == 1 and #queue == 1)
+end)
+test("message deduplication expires and its cache remains bounded", function()
+  local now = 100
+  local bridge, _, queue = setup({ clock = function() return now end,
+    recent_message_ttl = 60, max_recent_messages = 1 })
+  assert(bridge:on_message(message("<@99> first", { id = "1001", author = { id = "30" } })))
+  queue[1]()
+  local handled, reason = bridge:on_message(message("<@99> second", { id = "1002", author = { id = "31" } }))
+  assert(not handled and reason == "busy" and bridge.recent_message_count == 1)
+  now = now + 61
+  assert(bridge:on_message(message("<@99> second", { id = "1002", author = { id = "31" } })))
+  assert(bridge.recent_message_count == 1)
 end)
 test("parallel work is bounded", function()
   local bridge, _, queue = setup()
@@ -95,6 +118,25 @@ test("generation diagnostics keep safe provider error codes without request cont
   assert(not warnings[1].fields.detail:find("private", 1, true))
   assert(bridge.parallel == 0)
 end)
+test("a failed Ollama call does not poison subsequent requests from other users", function()
+  local now, calls, queue = 100, 0, {}
+  local engine = { generate = function()
+    calls = calls + 1
+    if calls == 1 then return nil, { code = "request_failed" } end
+    return "Recovered reply"
+  end }
+  local sent = {}
+  local bridge = Bridge.new({ enabled = true, bot_id = "99", engine = engine,
+    clock = function() return now end, spawn = function(fn) queue[#queue + 1] = fn end,
+    send = function(channel, content) sent[#sent + 1] = { channel = channel, content = content }; return true end })
+  assert(bridge:on_message(message("<@99> first", { author = { id = "30" } })))
+  queue[1]()
+  now = now + 1
+  assert(bridge:on_message(message("<@99> second", { id = "1002", author = { id = "31" } })))
+  queue[2]()
+  assert(calls == 2 and #sent == 1 and sent[1].content == "Recovered reply")
+  assert(bridge.parallel == 0)
+end)
 test("successful mock response sends one bounded reply", function()
   local bridge, _, queue, sent = setup()
   assert(bridge:on_message(message("<@99> hi")))
@@ -109,6 +151,25 @@ test("Discord send failures release capacity and do not escape the bridge", func
   assert(bridge:on_message(message("<@99> hello")))
   queue[1]()
   assert(bridge.parallel == 0 and warnings == 1)
+end)
+test("scheduler failure releases cooldown and message reservations", function()
+  local queue, attempts = {}, 0
+  local bridge = Bridge.new({ enabled = true, bot_id = "99",
+    engine = { generate = function() return "reply" end },
+    spawn = function(fn)
+      attempts = attempts + 1
+      if attempts == 1 then error("scheduler unavailable") end
+      queue[#queue + 1] = fn
+    end,
+    send = function() return true end })
+  local request = message("<@99> hello")
+  local accepted, reason = bridge:on_message(request)
+  assert(not accepted and reason == "spawn_failed")
+  assert(bridge.parallel == 0 and bridge.recent_message_count == 0)
+  assert(bridge.inflight[request.id] == nil and bridge.cooldowns["10:30"] == nil)
+  assert(bridge:on_message(request))
+  queue[1]()
+  assert(bridge.parallel == 0)
 end)
 io.write(string.format("personality Discord bridge: %d tests, %d failures\n", passed + failed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -14,8 +14,11 @@ Invalid engine configuration leaves Molly bootable and disables the bridge.
   that message to avoid duplicate replies. Other eligible messages still use
   the existing responder.
 - Per guild/user cooldown: 30 seconds. Maximum concurrent generations: 2.
-  Duplicate in-flight Discord message IDs are rejected, and the cooldown map
-  has a hard entry bound.
+  Duplicate message IDs are rejected while in flight and retained in a bounded
+  10-minute deduplication window (up to 4,096 IDs per running process). When
+  the window is full, new requests fail closed until an entry expires. The
+  deduplication cache is intentionally in-memory, not durable across a process
+  restart. The cooldown map also has a hard entry bound.
 - The existing Ollama transport enforces the configured request timeout and
   response-byte limit. No retries occur. Generation, timeout, and Discord send
   failures are logged with generic details; they do not stop command handling.

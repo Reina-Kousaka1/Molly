@@ -14,7 +14,10 @@ function Bridge.new(options)
     is_prefix_command = options.is_prefix_command,
     bot_id = options.bot_id, cooldown_seconds = options.cooldown_seconds or 30,
     max_parallel = options.max_parallel or 2, parallel = 0, cooldowns = {}, inflight = {},
-    max_cooldown_entries = options.max_cooldown_entries or 2048 }, Bridge)
+    max_cooldown_entries = options.max_cooldown_entries or 2048,
+    recent_messages = {}, recent_message_count = 0,
+    recent_message_ttl = options.recent_message_ttl or 600,
+    max_recent_messages = options.max_recent_messages or 4096 }, Bridge)
 end
 
 function Bridge:matches(message)
@@ -43,6 +46,12 @@ function Bridge:on_message(message)
   local now = self.clock()
   local scope = message.guild_id .. ":" .. message.author.id
   if self.inflight[message.id] then return false, "duplicate" end
+  local recent_at = self.recent_messages[message.id]
+  if recent_at then
+    if now - recent_at < self.recent_message_ttl then return false, "duplicate" end
+    self.recent_messages[message.id] = nil
+    self.recent_message_count = math.max(0, self.recent_message_count - 1)
+  end
   if now - (self.cooldowns[scope] or 0) < self.cooldown_seconds then return false, "cooldown" end
   if self.parallel >= self.max_parallel then return false, "busy" end
   local count = 0
@@ -50,9 +59,20 @@ function Bridge:on_message(message)
     if now - at >= self.cooldown_seconds then self.cooldowns[key] = nil else count = count + 1 end
   end
   if count >= self.max_cooldown_entries and not self.cooldowns[scope] then return false, "busy" end
+  if self.recent_message_count >= self.max_recent_messages then
+    for id, at in pairs(self.recent_messages) do
+      if now - at >= self.recent_message_ttl then
+        self.recent_messages[id] = nil
+        self.recent_message_count = math.max(0, self.recent_message_count - 1)
+      end
+    end
+    if self.recent_message_count >= self.max_recent_messages then return false, "busy" end
+  end
   local content = message.content:gsub("<@!?" .. self.bot_id .. ">", "", 1):gsub("^%s+", "")
   if content == "" then return false, "empty" end
   self.inflight[message.id] = true
+  self.recent_messages[message.id] = now
+  self.recent_message_count = self.recent_message_count + 1
   self.parallel = self.parallel + 1
   self.cooldowns[scope] = now
   local spawned = pcall(self.spawn, function()
@@ -77,6 +97,9 @@ function Bridge:on_message(message)
   end)
   if not spawned then
     self.inflight[message.id] = nil
+    self.recent_messages[message.id] = nil
+    self.recent_message_count = math.max(0, self.recent_message_count - 1)
+    self.cooldowns[scope] = nil
     self.parallel = math.max(0, self.parallel - 1)
     return false, "spawn_failed"
   end
