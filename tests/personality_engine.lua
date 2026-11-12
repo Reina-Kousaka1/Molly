@@ -116,11 +116,14 @@ test("config validates engine settings without ever failing the boot", function(
   assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MODEL"))
 
   -- Malformed endpoint, credentials, path, bad bounds: engine stays off.
-  for _, bad in ipairs({ "ftp://127.0.0.1:11434", "http://user:pass@127.0.0.1:11434", "http://127.0.0.1:11434/api", "::1" }) do
+  for _, bad in ipairs({ "ftp://127.0.0.1:11434", "https://127.0.0.1:11434", "http://user:pass@127.0.0.1:11434", "http://127.0.0.1:11434/api", "::1" }) do
     config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_OLLAMA_URL = bad }))
     assert(config.personality.engine.enabled == false)
     assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_URL"))
   end
+  config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSONALITY_ENGINE_ENABLED = "true",
+    MOLLY_OLLAMA_MODEL = "qwen2.5:7b", MOLLY_OLLAMA_URL = "https://127.0.0.1:11434" }))
+  assert(config.personality.engine.enabled == false, "unsupported HTTPS must not start an unusable integration")
   config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_OLLAMA_TIMEOUT_MS = "10", MOLLY_OLLAMA_MAX_RESPONSE_BYTES = "12" }))
   assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_TIMEOUT_MS"))
   assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MAX_RESPONSE_BYTES"))
@@ -351,10 +354,11 @@ test("engine rejects content that alone exceeds the prompt budget", function()
 end)
 
 test("engine sanitizes replies and defangs group pings", function()
-  local server = SimulatedOllama({ content = "first\r\nline\7 with @everyone and @here  " })
+  local server = SimulatedOllama({ content = "first\r\nline\7 with @everyone and @here plus <@123> and <@&456>  " })
   local engine = new_engine_with_server(server)
   local reply = assert(engine:generate({ content = "hi" }))
   assert(not find(reply, "@everyone") and not find(reply, "@here"))
+  assert(not find(reply, "<@"), "model output must not emit pingable user or role mentions")
   assert(find(reply, "everyone") and find(reply, "here"))
   assert(not find(reply, "\7"))
 end)
@@ -367,6 +371,14 @@ test("engine truncates oversized replies at the configured bound", function()
   assert(reply:sub(-3) == "...")
   assert(meta.truncated == true)
   assert(type(meta.prompt_chars) == "number" and meta.prompt_chars > 0)
+end)
+
+test("engine truncation keeps UTF-8 code points intact", function()
+  local server = SimulatedOllama({ content = string.rep("🎀", 20) })
+  local engine = new_engine_with_server(server, { max_reply_chars = 20 })
+  local reply, meta = assert(engine:generate({ content = "hi" }))
+  assert(meta.truncated == true and #reply <= 20)
+  assert(reply == string.rep("🎀", 4) .. "...", "truncation must stop before a partial emoji")
 end)
 
 test("engine propagates provider error codes and never throws", function()
@@ -562,13 +574,15 @@ test("new modules never require Discord or persistence internals", function()
   end
 end)
 
-test("molly.lua prepares the engine inert and never generates replies", function()
+test("molly.lua connects the opt-in engine through the direct-mention bridge", function()
   local handle = assert(io.open("molly.lua", "rb"))
   local source = handle:read("*a")
   handle:close()
   assert(find(source, "MOLLY_PERSONALITY_ENGINE_ENABLED"))
-  assert(find(source, "bound_to_discord = status.bound_to_discord") or find(source, "bound_to_discord"))
-  assert(not find(source, "engine:generate"))
+  assert(find(source, "PersonalityDiscordBridge.new"))
+  assert(find(source, "ollama_bridge:matches(message)"))
+  assert(find(source, "ollama_bridge.on_message"))
+  assert(not find(source, "ollama_engine:generate"), "Discord events must pass through the bridge")
 end)
 
 test("persona engine modules parse as plain Lua 5.1 source", function()

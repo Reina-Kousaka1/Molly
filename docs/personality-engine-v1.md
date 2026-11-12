@@ -56,7 +56,7 @@ Explicitly out of scope (do not read this change as implementing them):
 │  · request validation, history filtering (user/assistant only)        │
 │  · prompt budget: drop oldest history first, then memory, then reject │
 │  · best-effort memory recall (never fatal, never writes)              │
-│  · reply sanitization, @everyone/@here defang, reply length bound     │
+│  · reply sanitization, mention defanging, UTF-8-safe reply bound       │
 └───────┬───────────────────────────────┬───────────────────────────────┘
         ▼ provider contract             ▼ memory contract (read-only for engine)
 ┌───────────────────────────┐  ┌────────────────────────────────────────┐
@@ -83,7 +83,7 @@ SeaWorld or store references (enforced by a unit test that scans module
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `MOLLY_PERSONALITY_ENGINE_ENABLED` | `false` | Feature flag. Only `true`/`false` accepted. |
-| `MOLLY_OLLAMA_URL` | `http://127.0.0.1:11434` | http(s) **origin** only: no userinfo, path, query or fragment. Keep it on loopback or a trusted private network. |
+| `MOLLY_OLLAMA_URL` | `http://127.0.0.1:11434` | `http://` **origin** only (the built-in Luvit transport does not support TLS): no userinfo, path, query or fragment. Keep it on loopback or a trusted private network. |
 | `MOLLY_OLLAMA_MODEL` | unset | Required when the engine is enabled (e.g. `qwen2.5:7b`). Printable characters only, ≤ 100 chars, no whitespace. |
 | `MOLLY_OLLAMA_TIMEOUT_MS` | `15000` | 100–120000 ms. Aborts the request; no retries. |
 | `MOLLY_OLLAMA_MAX_RESPONSE_BYTES` | `262144` | 1024–4194304 (4 MiB). Applied before JSON parsing and again at the transport. |
@@ -95,9 +95,12 @@ the engine stays off, the error is logged as
 the bot starts exactly as before. When valid, `molly.lua` logs
 `personality_engine_prepared`. With the feature enabled, direct mentions use
 the Ollama bridge; other eligible messages retain the deterministic responder.
-The bridge limits requests to a 30-second per-guild/user cooldown and two
-concurrent generations. The configured transport timeout and response bound
-apply, with no retries.
+Messages beginning with the guild's configured prefix are left to the shared
+command router, even if they mention Molly as an argument. If prefix settings
+cannot be read, the bridge fails closed for that message. The bridge limits
+requests to a 30-second per-guild/user cooldown and two concurrent generations.
+Provider error codes are logged without request text or raw errors. The
+configured transport timeout and response bound apply, with no retries.
 
 ## Limits enforced in code
 

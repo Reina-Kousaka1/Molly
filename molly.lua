@@ -112,13 +112,14 @@ if #config.music.configuration_errors == 0 and config.music.lavalink_url then mu
 local music = MusicAdapter.new(music_options)
 -- Personality Engine V1 (integration phase): opt-in behind
 -- MOLLY_PERSONALITY_ENGINE_ENABLED, disabled by default. Even when enabled it is
--- constructed for readiness diagnostics only and is NOT bound to any Discord
--- event, never auto-replies and never persists conversation data. A
--- misconfiguration keeps the engine off and logs an error; it never stops Molly.
+-- connected only through the bounded direct-mention bridge below. It does not
+-- execute commands, call economy/moderation services, or persist conversation
+-- data. A misconfiguration keeps this integration off and never stops Molly.
 if #config.personality.engine.configuration_errors > 0 then
   logger:error("personality_engine_config_invalid", { variables = table.concat(config.personality.engine.configuration_errors, ",") })
 end
 local ollama_engine, ollama_bridge
+local prefix_commands
 if config.personality.engine.enabled then
   local Ollama = require("src.personality.ollama")
   local EngineV1 = require("src.personality.llm_engine")
@@ -136,10 +137,14 @@ if config.personality.engine.enabled then
     logger:info("personality_engine_prepared", {
       enabled = status.enabled, ready = status.ready, provider = status.provider,
       model = config.personality.engine.ollama.model,
-      bound_to_discord = status.bound_to_discord, memory = status.memory,
+      direct_mention_bridge_ready = status.ready, memory = status.memory,
     })
     ollama_bridge = PersonalityDiscordBridge.new({ enabled = status.ready, engine = ollama_engine,
       logger = logger, cooldown_seconds = 30, max_parallel = 2,
+      is_prefix_command = function(message)
+        if not prefix_commands then return nil end
+        return prefix_commands:has_prefix(message)
+      end,
       send = function(channel, message)
         local rest = bootstrap and bootstrap.bot and bootstrap.bot.client and bootstrap.bot.client.rest
         if not rest or type(rest.send_message) ~= "function" then return false end
@@ -242,7 +247,7 @@ local function bind_client_events(client)
 end
 local presence = Presence.new({ logger = logger, schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval,
   write = function(text) personality:set_status(text); return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
-local prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
+prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
 SettingsCommands.register(commands, guild_settings, { on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end })
 PermissionCommands.register(commands, permission_engine)
 AFKCommands.register(commands, afk)

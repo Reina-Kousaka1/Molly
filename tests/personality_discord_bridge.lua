@@ -23,6 +23,7 @@ local function setup(options)
   end }
   local bridge = Bridge.new({ enabled = options.enabled ~= false, bot_id = "99", engine = engine,
     clock = function() return options.now or 100 end,
+    is_prefix_command = options.is_prefix_command,
     spawn = options.spawn or function(fn) queue[#queue + 1] = fn end,
     send = function(channel, content) sent[#sent + 1] = { channel = channel, content = content }; return true end,
     cooldown_seconds = 30, max_parallel = 2, max_cooldown_entries = 10 })
@@ -65,6 +66,14 @@ test("prefix commands after an explicit mention are left to command handling", f
   local bridge = setup()
   assert(not bridge:on_message(message("<@99> .daily")))
 end)
+test("a configured prefix command containing a Molly mention is not sent to Ollama", function()
+  local bridge, engine, queue = setup({ is_prefix_command = function(msg)
+    return msg.content:sub(1, 1) == "!"
+  end })
+  assert(not bridge:on_message(message("!pay <@99> 5")))
+  assert(engine.calls == 0 and #queue == 0)
+  assert(bridge:on_message(message("hello <@99>", { id = "1002" })))
+end)
 test("timeout and malformed provider results are swallowed without Discord sends", function()
   for _, mode in ipairs({ "failure", "invalid" }) do
     local bridge, _, queue, sent = setup({ [mode] = true })
@@ -72,6 +81,19 @@ test("timeout and malformed provider results are swallowed without Discord sends
     queue[1]()
     assert(#sent == 0 and bridge.parallel == 0)
   end
+end)
+test("generation diagnostics keep safe provider error codes without request content", function()
+  local queue, warnings = {}, {}
+  local bridge = Bridge.new({ enabled = true, bot_id = "99",
+    engine = { generate = function() return nil, { code = "timeout", detail = "never log request text" } end },
+    spawn = function(fn) queue[#queue + 1] = fn end,
+    logger = { warn = function(_, event, fields) warnings[#warnings + 1] = { event = event, fields = fields } end } })
+  assert(bridge:on_message(message("<@99> private content")))
+  queue[1]()
+  assert(#warnings == 1 and warnings[1].event == "personality_discord_generation_failed")
+  assert(warnings[1].fields.detail == "timeout")
+  assert(not warnings[1].fields.detail:find("private", 1, true))
+  assert(bridge.parallel == 0)
 end)
 test("successful mock response sends one bounded reply", function()
   local bridge, _, queue, sent = setup()

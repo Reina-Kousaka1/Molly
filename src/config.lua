@@ -26,8 +26,8 @@ local function valid_preppydb_url(value)
   return value and value:match("^http://[^/%s]+") and not value:match("^http://[^/]*@")
 end
 local function origin_url(value)
-  -- http(s) origin only: no userinfo, path, query or fragment.
-  return type(value) == "string" and value:match("^https?://[^/%s@?#]+/?$") ~= nil
+  -- Built-in Luvit transport is HTTP-only; require an origin, not a URL path.
+  return type(value) == "string" and value:match("^http://[^/%s@?#]+/?$") ~= nil
 end
 local function ids(value, errors)
   local result = {}; value = trim(value)
