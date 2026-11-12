@@ -109,6 +109,37 @@ end
 local music_options = { configuration_errors = config.music.configuration_errors }
 if #config.music.configuration_errors == 0 and config.music.lavalink_url then music_options.provider = LavalinkClient.new({ url = config.music.lavalink_url, password = config.music.lavalink_password, timeout_ms = config.music.lavalink_timeout_ms, transport = MusicTransport.request }) end
 local music = MusicAdapter.new(music_options)
+-- Personality Engine V1 (integration phase): opt-in behind
+-- MOLLY_PERSONALITY_ENGINE_ENABLED, disabled by default. Even when enabled it is
+-- constructed for readiness diagnostics only and is NOT bound to any Discord
+-- event, never auto-replies and never persists conversation data. A
+-- misconfiguration keeps the engine off and logs an error; it never stops Molly.
+if #config.personality.engine.configuration_errors > 0 then
+  logger:error("personality_engine_config_invalid", { variables = table.concat(config.personality.engine.configuration_errors, ",") })
+end
+if config.personality.engine.enabled then
+  local Ollama = require("src.personality.ollama")
+  local EngineV1 = require("src.personality.llm_engine")
+  local transport_loaded, OllamaTransport = pcall(require, "src.personality.luvit_transport")
+  local adapter, adapter_error = Ollama.new({
+    url = config.personality.engine.ollama.url,
+    model = config.personality.engine.ollama.model,
+    timeout_ms = config.personality.engine.ollama.timeout_ms,
+    max_response_bytes = config.personality.engine.ollama.max_response_bytes,
+    transport = transport_loaded and OllamaTransport.request or nil,
+  })
+  if adapter then
+    local engine = EngineV1.new({ enabled = true, provider = adapter, provider_name = "ollama", logger = logger })
+    local status = engine:status()
+    logger:info("personality_engine_prepared", {
+      enabled = status.enabled, ready = status.ready, provider = status.provider,
+      model = config.personality.engine.ollama.model,
+      bound_to_discord = status.bound_to_discord, memory = status.memory,
+    })
+  else
+    logger:error("personality_engine_unavailable", { detail = tostring(adapter_error) })
+  end
+end
 local app = App.new({ logger = logger, seaworld = persistence, persistence = persistence,
   persistence_backend = config.persistence.backend, music = music })
 local commands = CommandRouter.new(logger)

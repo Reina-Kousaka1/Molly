@@ -21,6 +21,8 @@ for suite in \
   tests/community.lua \
   tests/economy_v2.lua \
   tests/observability.lua \
+  tests/personality_luvit_transport.lua \
+  tests/personality_engine.lua \
   tests/music_voice.lua \
   tests/moderation_v2.lua \
   tests/sprint.lua \

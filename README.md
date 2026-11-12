@@ -207,6 +207,21 @@ migrate deployed data or establish Raspberry Pi capacity, backup/restore
 qualification, or lossless rollback after new PreppyDB writes. Keep the
 production default unchanged until those separate checks are completed.
 
+## 🌸 Personality Engine V1 (preparation — disabled)
+
+Molly also carries a **prepared, opt-in Personality Engine V1** (integration
+phase): a provider-agnostic core with an Ollama HTTP adapter for a local text
+model and a PreppyDB memory provider. It is **disabled by default**
+(`MOLLY_PERSONALITY_ENGINE_ENABLED=false`), **not bound to any Discord event**,
+and **never auto-replies or persists conversation data**. Corrupted or missing
+configuration keeps the engine off and never stops Molly. SeaWorld stays the
+authoritative database for all productive functions.
+
+See [the integration architecture](docs/personality-engine-v1.md) for module
+boundaries, limits, the error model, memory-provider preparation and the
+activation plan. Nothing in this state establishes production readiness for
+automatic personality replies.
+
 <p align="center">🌸 ──────── ♡ ──────── 🌸</p>
 
 ## 🎶 Lavalink, my music bestie

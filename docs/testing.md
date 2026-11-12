@@ -27,6 +27,15 @@ acknowledgements.
 These tests verify Molly's client behavior only; they do not establish
 SeaWorld's configured limit or server-side transaction semantics.
 
+`tests/personality_engine.lua` covers the disabled-by-default Personality
+Engine V1: configuration validation, the Ollama adapter against a simulated
+transport-level Ollama server (request shape, timeouts, HTTP status classes,
+malformed/empty/oversized responses), engine gating, history filtering, prompt
+budgeting, reply sanitization, and the PreppyDB memory provider against a
+synthetic in-memory CAS connector. `tests/personality_luvit_transport.lua`
+exercises the bounded Luvit transport with stubbed `coro-net`, `http-codec`
+and `uv`. No live Ollama, Discord, PreppyDB or SeaWorld service is contacted.
+
 `tests/stress.lua`'s default profile covers 100, 500, 1,000, 5,000, and 10,000
 synthetic ledger operations. It also compares journal rotation implementations
 at up to 100,000 appends. For the extended 100,000-operation ledger profile run:

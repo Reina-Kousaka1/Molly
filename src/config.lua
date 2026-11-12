@@ -25,6 +25,10 @@ local function valid_http_url(value) return value and value:match("^https?://[^/
 local function valid_preppydb_url(value)
   return value and value:match("^http://[^/%s]+") and not value:match("^http://[^/]*@")
 end
+local function origin_url(value)
+  -- http(s) origin only: no userinfo, path, query or fragment.
+  return type(value) == "string" and value:match("^https?://[^/%s@?#]+/?$") ~= nil
+end
 local function ids(value, errors)
   local result = {}; value = trim(value)
   if not value then return result end
@@ -68,6 +72,21 @@ function Config.load(env)
   if lavalink_url and not lavalink_password then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_PASSWORD" elseif lavalink_password and not lavalink_url then music_errors[#music_errors + 1] = "MOLLY_LAVALINK_URL" end
   local lavalink_timeout_ms = positive_integer(read(env, "MOLLY_LAVALINK_TIMEOUT_MS"), 1000, 100, 30000, music_errors, "MOLLY_LAVALINK_TIMEOUT_MS")
   local developers = ids(read(env, "MOLLY_DEVELOPER_IDS"), errors)
+  -- Personality Engine V1 (integration phase): opt-in and disabled by default.
+  -- Misconfiguration here must never block a production boot, so these errors
+  -- are reported separately (like music) and only keep the engine disabled.
+  local personality_errors = {}
+  local engine_enabled = boolean(read(env, "MOLLY_PERSONALITY_ENGINE_ENABLED"), false, personality_errors, "MOLLY_PERSONALITY_ENGINE_ENABLED")
+  local ollama_url = trim(read(env, "MOLLY_OLLAMA_URL")) or "http://127.0.0.1:11434"
+  if not origin_url(ollama_url) then personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_URL"; ollama_url = "http://127.0.0.1:11434" end
+  local ollama_model = trim(read(env, "MOLLY_OLLAMA_MODEL"))
+  if ollama_model and (ollama_model:find("[%s%z\1-\31\127]") ~= nil or #ollama_model > 100) then
+    personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_MODEL"
+    ollama_model = nil
+  end
+  if engine_enabled and not ollama_model then personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_MODEL" end
+  local ollama_timeout_ms = positive_integer(read(env, "MOLLY_OLLAMA_TIMEOUT_MS"), 15000, 100, 120000, personality_errors, "MOLLY_OLLAMA_TIMEOUT_MS")
+  local ollama_max_bytes = positive_integer(read(env, "MOLLY_OLLAMA_MAX_RESPONSE_BYTES"), 262144, 1024, 4 * 1024 * 1024, personality_errors, "MOLLY_OLLAMA_MAX_RESPONSE_BYTES")
   local guild_members_intent = boolean(read(env, "MOLLY_GUILD_MEMBERS_INTENT"), false, errors, "MOLLY_GUILD_MEMBERS_INTENT")
   local updater_url, updater_token = trim(read(env, "MOLLY_UPDATER_URL")), trim(read(env, "MOLLY_UPDATER_TOKEN"))
   if not local_updater_url(updater_url) then errors[#errors + 1] = "MOLLY_UPDATER_URL" end
@@ -82,6 +101,19 @@ function Config.load(env)
       preppydb = {
         url = preppydb_url, token = preppydb_token, timeout_ms = preppydb_timeout_ms,
         max_response_bytes = preppydb_max_response_bytes,
+      },
+    },
+    personality = {
+      engine = {
+        enabled = engine_enabled and #personality_errors == 0,
+        requested = engine_enabled,
+        configuration_errors = personality_errors,
+        ollama = {
+          url = ollama_url:gsub("/$", ""),
+          model = ollama_model,
+          timeout_ms = ollama_timeout_ms,
+          max_response_bytes = ollama_max_bytes,
+        },
       },
     },
     seaworld = { socket = sea_world_socket, health_url = sea_world_url, timeout_ms = timeout_ms, retry_attempts = retry_attempts },
