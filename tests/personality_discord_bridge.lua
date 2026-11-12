@@ -100,7 +100,10 @@ end)
 test("timeout and malformed provider results are swallowed without Discord sends", function()
   for _, mode in ipairs({ "failure", "invalid" }) do
     local bridge, _, queue, sent = setup({ [mode] = true })
-    assert(bridge:on_message(message("<@99> hello")))
+    local request = message("<@99> hello")
+    assert(bridge:on_message(request))
+    local duplicate, reason = bridge:on_message(request)
+    assert(not duplicate and reason == "duplicate" and bridge.parallel == 1)
     queue[1]()
     assert(#sent == 0 and bridge.parallel == 0)
   end
