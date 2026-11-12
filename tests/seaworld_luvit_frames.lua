@@ -1,4 +1,4 @@
-package.path = "./?.lua;./?/init.lua;" .. package.path
+package.path = "./?.lua;./?/init.lua;./deps/?.lua;./deps/?/init.lua;" .. package.path
 
 local json = require("json")
 local active_mock
