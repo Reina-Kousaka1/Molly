@@ -60,16 +60,17 @@ jobs:
           echo "LUVIT_BIN=$RUNTIME/luvit" >> "$GITHUB_ENV"
           echo "LIT_BIN=$RUNTIME/lit" >> "$GITHUB_ENV"
 
-      - name: Install pinned Luvit HTTP and Discord test modules in temporary storage
+      - name: Install pinned Luvit HTTP, TLS, and Discord test modules in temporary storage
         run: |
           set -euo pipefail
           DEPS_ROOT="$RUNNER_TEMP/molly-personality-deps"
           mkdir -p "$DEPS_ROOT"
           cd "$DEPS_ROOT"
-          "$LIT_BIN" install luvit/json@2.8 luvit/coro-net@3.3.1 luvit/http-codec@3.0.8 filispeen/discord.lua@1.2.2
+          "$LIT_BIN" install luvit/json@2.8 luvit/coro-net@3.3.1 luvit/http-codec@3.0.8 luvit/secure-socket@1.0.0 filispeen/discord.lua@1.2.2
           grep -F 'version = "2.8"' deps/json.lua
           grep -F 'version = "3.3.1"' deps/coro-net.lua
           grep -F 'version = "3.0.8"' deps/http-codec.lua
+          test -f deps/secure-socket/init.lua
           # Luvit's custom resolver needs the absolute package entrypoint to
           # preserve the package's relative require() context.
           echo "MOLLY_TEST_DISCORD_MODULE=$DEPS_ROOT/deps/discord.lua/init.lua" >> "$GITHUB_ENV"

@@ -59,6 +59,7 @@ end)
 
 test("the explicit deep trigger routes selected complex text to Qwen 3.5", function()
   local text, vision = provider("qwen2.5:3b"), provider("qwen3.5:2b")
+  vision.controls = { supported = true, value = "high" }
   local router = new_router(text, vision)
   assert(router:generate(user("deep: compare these two ideas carefully")))
   assert(#text.calls == 0 and #vision.calls == 1)
@@ -91,6 +92,7 @@ test("a missing text model may safely fall back for text-only requests", functio
   local text, vision = provider("qwen2.5:3b", function()
     return nil, { code = "model_not_found", status = 404 }
   end), provider("qwen3.5:2b")
+  vision.controls = { supported = true, value = "high" }
   local router = new_router(text, vision)
   local result = assert(router:generate(user("hello")))
   assert(result.model == "qwen3.5:2b")

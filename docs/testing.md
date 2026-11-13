@@ -61,7 +61,8 @@ SeaWorld performance result.
 
 `tests/run_luvit.sh` runs the Luvit JSON frame-boundary test, mocked Lavalink
 client tests, mocked Discord registration tests, a no-network HTTPS image
-transport allowlist check, and a direct-mention Ollama/Discord E2E test over a
+transport policy test with a mocked TLS connection, bounded streaming and
+timeout behavior, and a direct-mention Ollama/Discord E2E test over a
 real Luvit HTTP socket to an ephemeral local mock server. Run it with a Luvit runtime and required Lua modules on the
 runtime's normal search path:
 
@@ -70,18 +71,21 @@ LUVIT_BIN=./runtime/luvit tests/run_luvit.sh
 ```
 
 The Luvit test suite uses `luvit/json@2.8`, `luvit/coro-net@3.3.1`,
-`luvit/http-codec@3.0.8`, and `filispeen/discord.lua@1.2.2`. Install them into
-a temporary dependency directory. Set `MOLLY_TEST_DEPS_DIR` to that directory
+`luvit/http-codec@3.0.8`, `luvit/secure-socket@1.0.0`, and
+`filispeen/discord.lua@1.2.2`. Install them into a temporary dependency directory.
+Set `MOLLY_TEST_DEPS_DIR` to that directory
 for single-file modules; also set `MOLLY_TEST_DISCORD_MODULE` to the absolute
 `discord.lua/init.lua` path so Luvit's custom resolver retains the package's
 relative `require()` context. The versioned workflow verifies the JSON and HTTP
-module versions and sets both variables. The Python harness binds only to
+module versions and sets both variables. Secure-socket is pinned because
+`coro-net` loads it for TLS connections. The Python harness binds only to
 `127.0.0.1` on an OS-assigned port, returns deterministic Ollama chat responses,
 including header/body timeouts and a provider error, and verifies request
-count/order without printing prompts. The image transport check rejects all
-non-allowlisted URLs before opening a socket; it does not contact Discord's
-CDN. The E2E does not start Ollama, connect to Discord, or contact an external
-service. Run the standalone E2E with:
+count/order without printing prompts. The image transport tests inject a
+mocked connection, verify the fixed Discord host/TLS request, stop oversized
+streams, and exercise timeout and redirect handling; they do not contact
+Discord's CDN. The E2E does not start Ollama, connect to Discord, or contact an
+external service. Run the standalone E2E with:
 
 ```sh
 LUVIT_BIN=./runtime/luvit \
@@ -93,7 +97,7 @@ For the full Luvit suite, additionally set `MOLLY_TEST_DISCORD_MODULE` to the
 absolute package entrypoint before running `tests/run_luvit.sh`.
 
 The dedicated `.github/workflows/personality-ollama-e2e.yml` workflow builds
-the pinned Luvit version, installs the test-only HTTP/Discord modules in
+the pinned Luvit version, installs the test-only HTTP/TLS/Discord modules in
 temporary storage, and runs the complete Luvit test runner for updates to the
 personality branch and PRs targeting `main` or `arena/b9d4658e-molly`.
 

@@ -54,6 +54,12 @@ filename extension (when present), actual byte count and JPEG/PNG/WebP
 signatures must agree. Image bytes are held transiently in memory and converted
 to base64 only for the Ollama request; Molly does not persist them.
 
+The downloader uses Luvit's pinned `coro-net` and `http-codec` modules plus
+the optional `secure-socket` TLS module. Install `luvit/secure-socket@1.0.0`
+with the runtime dependencies; if it is unavailable, image handling fails
+closed while text-only mentions continue to work. The response body is read in
+bounded chunks, and redirects are not followed.
+
 This is signature and container-header validation, not a full image decoder.
 Malformed files that mimic a supported header can still be rejected by Ollama.
 GIF, SVG, animated formats and multiple-image messages are not supported.
