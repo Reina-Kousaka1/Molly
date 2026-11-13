@@ -1,5 +1,6 @@
 local Service = {}
 Service.__index = Service
+local Durability = require("src.persistence.preppydb_durability")
 
 local function state(status, detail, extra)
   local result = { status = status, detail = detail }
@@ -40,11 +41,32 @@ function Service:check()
     self.current = state("unavailable", "storage_not_ready")
     return self:get_state()
   end
+  if ready.read_only ~= false then
+    local evidence = {}
+    if type(ready.read_only) == "boolean" then evidence.read_only = ready.read_only end
+    self.current = state("not_ready", "storage_writeability_unverifiable", evidence)
+    return self:get_state()
+  end
   local version, version_error = self.connector:version()
   if type(version) ~= "table" or version.api_version ~= "1.0.0" then
     self.current = state("incompatible_api", "api_version", {
       api_version = type(version) == "table" and version.api_version or nil,
     })
+    return self:get_state()
+  end
+  if version.engine ~= "preppydb" then
+    self.current = state("incompatible_api", "server_identity", { engine = version.engine })
+    return self:get_state()
+  end
+  local durability, durability_detail, sync_mode, durable_writes = Durability.classify(version)
+  if durability ~= "durable" then
+    local detail = durability == "not_durable" and "not_durable" or "durability_unverifiable"
+    local evidence = {
+      durability_detail = durability_detail,
+    }
+    if type(sync_mode) == "string" then evidence.sync_mode = sync_mode end
+    if type(durable_writes) == "boolean" then evidence.durable_writes = durable_writes end
+    self.current = state("not_ready", detail, evidence)
     return self:get_state()
   end
   local principal, auth_error = self.connector:whoami()
@@ -80,6 +102,10 @@ function Service:check()
     api_version = version.api_version,
     package_version = version.version,
     engine = version.engine,
+    read_only = false,
+    sync_mode = sync_mode,
+    durable_writes = durable_writes,
+    durability = durability,
   })
   return self:get_state()
 end
@@ -98,6 +124,12 @@ function Service:health()
   local ready = self.connector:ready()
   if type(ready) ~= "table" or ready.ready ~= true then
     self.current = state("unavailable", "storage_not_ready")
+    return self:get_state()
+  end
+  if ready.read_only ~= false then
+    local evidence = {}
+    if type(ready.read_only) == "boolean" then evidence.read_only = ready.read_only end
+    self.current = state("not_ready", "storage_writeability_unverifiable", evidence)
     return self:get_state()
   end
   if self.current.status == "healthy" then return self:get_state() end

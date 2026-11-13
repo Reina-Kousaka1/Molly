@@ -180,15 +180,46 @@ assert(not missing_state_ok and missing_state_reason == "missing_document")
 
 local status_connector = {
   health = function() return { status = "ok" } end,
-  ready = function() return { ready = true } end,
-  version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "preppydb" } end,
+  ready = function() return { ready = true, read_only = false } end,
+  version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "preppydb",
+    sync_mode = "always", durable_writes = true } end,
   whoami = function() return { roles = { "write" } } end,
   collections = function() return { "molly_guild_state", "molly_guild_registry", "molly_global_state" } end,
 }
 local service = Service.new(status_connector)
 assert(service:connect())
 assert(service:get_state().status == "healthy" and service:get_state().api_version == "1.0.0")
+assert(service:get_state().read_only == false)
+assert(service:get_state().sync_mode == "always" and service:get_state().durable_writes == true)
 assert(service:health().status == "healthy")
+status_connector.ready = function() return { ready = true, read_only = true } end
+local readonly_ok, readonly_reason = service:connect()
+assert(not readonly_ok and readonly_reason == "storage_writeability_unverifiable")
+assert(service:get_state().status == "not_ready")
+status_connector.ready = function() return { ready = true } end
+local unknown_readonly_ok, unknown_readonly_reason = service:connect()
+assert(not unknown_readonly_ok and unknown_readonly_reason == "storage_writeability_unverifiable")
+status_connector.ready = function() return { ready = true, read_only = false } end
+local function assert_durability_rejected(version, expected_detail)
+  status_connector.version = function() return version end
+  local ok, reason = service:connect()
+  local current = service:get_state()
+  assert(not ok and reason == expected_detail and current.status == "not_ready")
+  assert(current.detail == expected_detail)
+end
+assert_durability_rejected({ api_version = "1.0.0", sync_mode = "periodic", durable_writes = false }, "not_durable")
+assert_durability_rejected({ api_version = "1.0.0", sync_mode = "always" }, "durability_unverifiable")
+assert_durability_rejected({ api_version = "1.0.0", durable_writes = true }, "durability_unverifiable")
+assert_durability_rejected({ api_version = "1.0.0", sync_mode = "always", durable_writes = false }, "durability_unverifiable")
+assert_durability_rejected({ api_version = "1.0.0", sync_mode = "periodic", durable_writes = true }, "durability_unverifiable")
+status_connector.version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "other-db",
+  sync_mode = "always", durable_writes = true } end
+local identity_ok, identity_reason = service:connect()
+assert(not identity_ok and identity_reason == "server_identity")
+assert(service:get_state().status == "incompatible_api")
+status_connector.version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "preppydb",
+  sync_mode = "always", durable_writes = true } end
+assert(service:connect())
 status_connector.collections = function() return { "molly_guild_state" } end
 local missing_ok, missing_reason = service:connect()
 assert(not missing_ok and missing_reason == "required_collection_missing")

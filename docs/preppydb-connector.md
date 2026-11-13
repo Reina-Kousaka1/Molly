@@ -21,8 +21,12 @@ The PreppyDB path requires:
   `molly_global_state`.
 
 Molly does not create collections automatically. Startup checks readiness,
-PreppyDB API version `1.0.0`, token role, and all three collections before connecting
-the Discord client. Missing or incompatible setup fails closed. The bearer
+PreppyDB API version `1.0.0`, engine identity, writable readiness, synchronous
+durability, token role, and all three collections before connecting the Discord
+client. Readiness must explicitly report `read_only=false`. It accepts durability only
+when `/v1/version` reports both `sync_mode="always"` and
+`durable_writes=true`; missing, unknown, or contradictory fields fail closed.
+Missing or incompatible setup fails closed. The bearer
 token is read only from the environment and is not logged. The current client
 does not provide TLS; keep it on loopback or a trusted private network and do
 not expose the token to an untrusted network.
@@ -115,15 +119,20 @@ gate, never a binary one:
 
 | Probe result | Meaning | Apply behaviour |
 | --- | --- | --- |
-| `durable` | `sync_mode="always"` and/or `durable_writes=true` | proceeds |
+| `durable` | both `sync_mode="always"` and `durable_writes=true` | proceeds |
 | `not_durable` | `sync_mode` reports `never`/`none`/`off`/`periodic`/`interval`/`batch`, or `durable_writes=false` | aborts with `not_durable` **before the first write** |
-| `unverifiable` | endpoint missing, transport error, unknown or contradictory fields (`inconsistent_durability`) | proceeds, but the summary records `durability="unverifiable"` and `durable=false` |
+| `unverifiable` | endpoint missing, transport error, unknown, missing, or contradictory fields (`inconsistent_durability`) | apply is refused before the first write |
 
 `Migration.durability(target)` exposes the probe directly. It is deliberately
-strict: contradictory evidence (for example `sync_mode="always"` together with
-`durable_writes=false`) is `unverifiable`, not "probably fine", and silence is
-never reported as durability. A dry run does not probe, because it writes
-nothing.
+strict: both fields must be present and agree; contradictory evidence (for
+example `sync_mode="always"` together with `durable_writes=false`) is
+`unverifiable`, not "probably fine", and silence is never reported as
+durability. The migration primitive only gates writes, but the operator CLI
+also prints a read-only durability probe in dry-run mode for visibility.
+
+This contract means the server completed its configured sync operation before
+acknowledging; it does not prove that every storage controller or device honors
+flushes during sudden physical power loss.
 
 ### Verify-only cutover gate
 
@@ -135,12 +144,13 @@ immediately before flipping `MOLLY_PERSISTENCE_BACKEND`, because it is the only
 step that can distinguish "everything was migrated" from "everything that
 happened to be migrated".
 
-### The gap the manifest cannot close
+### Missing records and the complete manifest
 
-`PreppyStore` treats a missing guild document as version `0` and writes its
-empty defaults on the first mutation. A guild that was never migrated is
-therefore indistinguishable from a brand-new guild at runtime: after cutover it
-silently starts from empty state instead of failing loudly. Consequences:
+For guilds, the registry is mandatory. A missing registry returns
+`not_migrated`; a registry without its state document returns
+`missing_document`. New guilds are provisioned only through the explicit
+onboarding operation. Global records are initialized from defaults when absent,
+so the complete global manifest must be verified before cutover. Consequences:
 
 - `verify_only` must pass for the *complete* manifest before cutover.
 - The manifest must be derived from the source side (the SeaWorld collections),
