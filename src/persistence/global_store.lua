@@ -1,5 +1,7 @@
 local GlobalStore = {}
 GlobalStore.__index = GlobalStore
+local MigrationWriteGate = require("src.persistence.migration_write_gate")
+local shared_write_gate = MigrationWriteGate.shared
 
 local function valid_name(value)
   return type(value) == "string" and value:match("^[a-z][a-z0-9_%-]*$") ~= nil and #value <= 48
@@ -13,15 +15,20 @@ local function persistence_error(reason)
 end
 
 function GlobalStore.new(connector)
-  return setmetatable({ connector = connector, busy = {} }, GlobalStore)
+  return setmetatable({ connector = connector, busy = {}, write_gate = shared_write_gate }, GlobalStore)
 end
 
 function GlobalStore:run(name, defaults, fn)
   if not valid_name(name) or type(defaults) ~= "table" or type(fn) ~= "function" then return false, "invalid_argument" end
-  if self.busy[name] then return false, "busy" end
+  local lease, gate_error = self.write_gate:enter()
+  if not lease then return false, gate_error end
+  if self.busy[name] then self.write_gate:leave(lease, false); return false, "busy" end
   self.busy[name] = true
   local ok_session, c, reason = pcall(self.connector.session, self.connector)
-  if not ok_session or not c then self.busy[name] = nil; return false, ok_session and (reason or "unavailable") or "unavailable" end
+  if not ok_session or not c then
+    self.busy[name] = nil; self.write_gate:leave(lease, false)
+    return false, ok_session and (reason or "unavailable") or "unavailable"
+  end
   local collection = "molly_global_" .. name
   local commit_attempted = false
   local function work()
@@ -70,6 +77,7 @@ function GlobalStore:run(name, defaults, fn)
   end
   pcall(c.close, c)
   self.busy[name] = nil
+  self.write_gate:leave(lease, commit_attempted or rollback_failed)
   if rollback_failed then return false, "outcome_unknown" end
   if not called then return false, "unavailable" end
   return success, result

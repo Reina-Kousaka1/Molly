@@ -1,5 +1,7 @@
 local Store = {}
 Store.__index = Store
+local MigrationWriteGate = require("src.persistence.migration_write_gate")
+local shared_write_gate = MigrationWriteGate.shared
 
 local function valid_id(value)
   return type(value) == "string" and #value >= 1 and #value <= 20 and value:match("^%d+$") ~= nil
@@ -13,7 +15,7 @@ local function persistence_error(reason)
 end
 
 function Store.new(connector)
-  return setmetatable({ connector = connector, busy_guilds = {} }, Store)
+  return setmetatable({ connector = connector, busy_guilds = {}, write_gate = shared_write_gate }, Store)
 end
 
 -- The transport's transactions are connection-bound and do not support query.
@@ -21,7 +23,12 @@ end
 -- located first, then the document is read again *inside* the transaction.
 function Store:run(guild_id, fn)
   if not valid_id(guild_id) then return false, "invalid_guild" end
-  if self.busy_guilds[guild_id] then return false, "busy" end
+  local lease, gate_error = self.write_gate:enter()
+  if not lease then return false, gate_error end
+  if self.busy_guilds[guild_id] then
+    self.write_gate:leave(lease, false)
+    return false, "busy"
+  end
   self.busy_guilds[guild_id] = true
   local c, collection
   local session_ok, session, session_reason = pcall(self.connector.session, self.connector)
@@ -29,6 +36,7 @@ function Store:run(guild_id, fn)
     c = session
   else
     self.busy_guilds[guild_id] = nil
+    self.write_gate:leave(lease, false)
     return false, session_ok and (session_reason or "capability_unavailable") or "unavailable"
   end
   collection = "molly_g_" .. guild_id
@@ -83,6 +91,7 @@ function Store:run(guild_id, fn)
   end
   pcall(c.close, c)
   self.busy_guilds[guild_id] = nil
+  self.write_gate:leave(lease, commit_attempted or rollback_failed)
   if rollback_failed then return false, "outcome_unknown" end
   if not ok then return false, "unavailable" end
   return success, result

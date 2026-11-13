@@ -3,6 +3,8 @@
 -- conditional PreppyDB transaction; no partial set of fields is published.
 local Store = {}
 Store.__index = Store
+local MigrationWriteGate = require("src.persistence.migration_write_gate")
+local shared_write_gate = MigrationWriteGate.shared
 
 local DEFAULT_GUILD_COLLECTION = "molly_guild_state"
 local DEFAULT_GUILD_REGISTRY_COLLECTION = "molly_guild_registry"
@@ -73,13 +75,17 @@ function Store.new(connector, options)
     global_collection = options.global_collection or DEFAULT_GLOBAL_COLLECTION,
     max_document_bytes = max_bytes,
     busy = {},
+    write_gate = shared_write_gate,
   }, Store)
 end
 
 function Store:_run(collection, key, initial, validate, fn, registry_status)
+  local lease, gate_error = self.write_gate:enter()
+  if not lease then return false, gate_error end
   local lock_key = collection .. "\0" .. key
-  if self.busy[lock_key] then return false, "busy" end
+  if self.busy[lock_key] then self.write_gate:leave(lease, false); return false, "busy" end
   self.busy[lock_key] = true
+  local may_have_written = false
 
   local called, success, result = pcall(function()
     local registry
@@ -136,12 +142,14 @@ function Store:_run(collection, key, initial, validate, fn, registry_status)
       op = "put", collection = collection, key = key,
       expected_version = version, value = data,
     }
+    may_have_written = true
     local committed, commit_error = self.connector:transaction({ operation })
     if not committed then return false, failure(commit_error, true) end
     return true, value
   end)
 
   self.busy[lock_key] = nil
+  self.write_gate:leave(lease, may_have_written)
   if not called then return false, "unavailable" end
   return success, result
 end
@@ -166,9 +174,12 @@ end
 -- The registry and state are one CAS transaction so a partial registration is impossible.
 function Store:provision_new_guild(guild_id)
   if not valid_guild(guild_id) then return false, "invalid_guild" end
+  local lease, gate_error = self.write_gate:enter()
+  if not lease then return false, gate_error end
   local lock_key = self.guild_collection .. "\0" .. guild_id
-  if self.busy[lock_key] then return false, "busy" end
+  if self.busy[lock_key] then self.write_gate:leave(lease, false); return false, "busy" end
   self.busy[lock_key] = true
+  local may_have_written = false
   local called, success, result = pcall(function()
     local state, state_error = self.connector:get(self.guild_collection, guild_id)
     local registry, registry_error = self.connector:get(self.guild_registry_collection, guild_id)
@@ -195,6 +206,7 @@ function Store:provision_new_guild(guild_id)
       return false, size_error or "serialization_failed"
     end
     if size > self.max_document_bytes then return false, "resource_limit" end
+    may_have_written = true
     local committed, commit_error = self.connector:transaction({
       { op = "put", collection = self.guild_collection, key = guild_id, expected_version = 0, value = data },
       { op = "put", collection = self.guild_registry_collection, key = guild_id, expected_version = 0,
@@ -212,6 +224,7 @@ function Store:provision_new_guild(guild_id)
     return true, "created"
   end)
   self.busy[lock_key] = nil
+  self.write_gate:leave(lease, may_have_written)
   if not called then return false, "unavailable" end
   return success, result
 end

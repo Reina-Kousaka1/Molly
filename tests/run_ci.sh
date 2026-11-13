@@ -17,6 +17,7 @@ for suite in \
   tests/preppydb_store.lua \
   tests/seaworld_preppydb_migration.lua \
   tests/molly_db_migrator_cli.lua \
+  tests/molly_cutover_readiness_v2.lua \
   tests/developer_lifecycle.lua \
   tests/v2.lua \
   tests/community.lua \
