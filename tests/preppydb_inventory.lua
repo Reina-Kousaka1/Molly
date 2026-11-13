@@ -31,7 +31,7 @@ assert(page.records[1].key == "guild/1")
 assert(page.records[1].serialized_bytes == "41")
 assert(requests[2].url:find("sequence=9007199254740993", 1, true))
 assert(requests[2].url:find("generation=2", 1, true))
-assert(requests[2].url:find("after=guild%%2F0", 1, true))
+assert(requests[2].url:find("after=guild%2F0", 1, true))
 
 local before = #requests
 local invalid, invalid_error = client:inventory_page("profiles", 9007199254740993, "2")

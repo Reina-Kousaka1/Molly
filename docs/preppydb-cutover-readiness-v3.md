@@ -13,7 +13,7 @@ durability.
 | PreppyDB | codex/preppydb-cutover-inventory-v1 | PR #2 branch arena/e486dfa1-preppydb at 8c1bc902f8e5cc898fb8dc7e68603588f2c11b4c | Admin-only server inventory API |
 | SeaWorld DB | codex/seaworld-snapshot-export-v1 | main at d6589e61564c91e2e013df69a98d0544e3026032 | Embedded MVCC logical snapshot export |
 
-Existing Molly PRs #9, #10 and #11 remain open. The V3 Molly draft will be added on this branch after the candidate commit is pushed. PreppyDB PR #2 remains open, PR #3 remains a separate draft, and V3 inventory PR #4 is open and draft. SeaWorld snapshot PR #2 is open and draft. No changes have been merged. The SeaWorld snapshot API is a library change; it is not a running service or network endpoint.
+Existing Molly PRs #9, #10 and #11 remain open. Molly V3 PR #13 is open as a draft on this branch, targeting the PR #11 readiness branch. PreppyDB PR #2 remains open, PR #3 remains a separate draft, and V3 inventory PR #4 is open and draft. SeaWorld snapshot PR #2 is open and draft. No changes have been merged. The SeaWorld snapshot API is a library change; it is not a running service or network endpoint.
 
 ## Implemented in this readiness candidate
 
