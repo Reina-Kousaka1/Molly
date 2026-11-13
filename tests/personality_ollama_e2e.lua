@@ -54,13 +54,15 @@ local router = assert(ModelRouter.new({
 
 local engine = Engine.new({ enabled = true, provider = router, provider_name = "ollama_dual" })
 local sent, warnings = {}, {}
+local prepared_image_requests = 0
 local bridge = Bridge.new({
   enabled = true,
   bot_id = "999999",
   engine = engine,
-  image_loader = { prepare = function(attachments)
+  image_loader = { prepare = function(_, attachments)
     if attachments == nil or (type(attachments) == "table" and #attachments == 0) then return {} end
     assert(type(attachments) == "table" and #attachments == 1)
+    prepared_image_requests = prepared_image_requests + 1
     return { "AQIDBA==" }
   end },
   send = function(channel_id, content)
@@ -167,6 +169,7 @@ poll:start(10, 10, function()
     accept("2007", "26", "recover please")
   elseif phase == 7 and #sent == 4 then
     check(sent[4].content == "Molly recovered after a provider failure 🎀", "later request recovers normally")
+    check(prepared_image_requests == 1, "one validated attachment reaches the image encoder")
     check(bridge.parallel == 0, "all bridge concurrency reservations are released")
     shutdown(0)
   end
