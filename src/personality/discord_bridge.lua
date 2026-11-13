@@ -84,6 +84,16 @@ local function clean_detail(error_value)
   return "provider_unavailable"
 end
 
+local function safe_error_location(error_value)
+  if type(error_value) ~= "string" or #error_value > 4096 then return nil end
+  local source, line = error_value:match("([%w%._/%-]+%.lua):(%d+)")
+  local filename = source and source:match("([^/]+)$")
+  local number = tonumber(line)
+  if not filename or not filename:match("^[%w_.%-]+$") or not number or number < 1 or number > 100000 then
+    return nil
+  end
+  return filename .. ":" .. line
+end
 local function send_text(self, channel_id, content)
   if not self.send then return end
   local sent, accepted = pcall(self.send, channel_id, content)
@@ -173,11 +183,15 @@ function Bridge:on_message(message)
       send_text(self, message.channel_id, text)
       if self.logger then
         local detail = clean_detail(not called and reply or generation_error)
-        pcall(self.logger.warn, self.logger, "personality_discord_vision_failed", { detail = detail })
+        local fields = { detail = detail }
+        if not called then fields.location = safe_error_location(reply) end
+        pcall(self.logger.warn, self.logger, "personality_discord_vision_failed", fields)
       end
     elseif self.logger then
       local detail = clean_detail(not called and reply or generation_error)
-      pcall(self.logger.warn, self.logger, "personality_discord_generation_failed", { detail = detail })
+      local fields = { detail = detail }
+      if not called then fields.location = safe_error_location(reply) end
+      pcall(self.logger.warn, self.logger, "personality_discord_generation_failed", fields)
     end
     release()
   end)

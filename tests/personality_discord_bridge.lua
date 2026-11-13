@@ -134,7 +134,9 @@ test("thrown async runtime errors are classified without leaking raw details", f
   assert(bridge:on_message(message("<@99> safe test")))
   queue[1]()
   assert(#warnings == 1 and warnings[1].fields.detail == "async_yield_error")
-  assert(not tostring(warnings[1].fields.detail):find("private", 1, true))
+  assert(type(warnings[1].fields.location) == "string"
+    and warnings[1].fields.location:match("^[%w_.%-]+:%d+$"))
+  assert(not tostring(warnings[1].fields.location):find("private", 1, true))
   assert(bridge.parallel == 0)
 end)
 test("a failed Ollama call does not poison subsequent requests from other users", function()

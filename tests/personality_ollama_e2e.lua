@@ -126,7 +126,7 @@ watchdog:start(12000, 0, function()
   local details = {}
   for _, warning in ipairs(warnings) do
     local detail = type(warning.detail) == "string" and warning.detail or "unknown"
-    details[#details + 1] = detail
+    details[#details + 1] = detail .. (type(warning.location) == "string" and "@" .. warning.location or "")
   end
   io.stderr:write("not ok - E2E timed out; current phase " .. tostring(phase)
     .. "; replies=" .. tostring(#sent) .. "; bridge_parallel=" .. tostring(bridge.parallel)
