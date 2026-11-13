@@ -75,7 +75,12 @@ local function clean_detail(error_value)
     if lower:find("module", 1, true) and lower:find("not found", 1, true) then
       return "dependency_unavailable"
     end
+    if lower:find("attempt to call", 1, true) then return "lua_call_error" end
+    if lower:find("attempt to index", 1, true) then return "lua_index_error" end
+    if lower:find("bad argument", 1, true) then return "lua_argument_error" end
+    return "runtime_error"
   end
+  if error_value ~= nil then return "invalid_runtime_error" end
   return "provider_unavailable"
 end
 
