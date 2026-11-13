@@ -40,6 +40,11 @@ and an async-to-coroutine bridge. Store calls must run in Luvit's coroutine
 context; the bridge suspends that coroutine until the callback returns. It
 does not spin the event loop, replace the bounded response reader, or retry a
 write.
+The repository's `package.lua` pins Molly's external `coro-net` and `coro-http`
+runtime packages. Install those declared dependencies with `lit install` from
+the Molly repository root before starting the application; the native
+PreppyDB CI does the same before its real-server tests. These modules are not
+part of the base Luvit executable.
 
 ## Atomic state updates
 

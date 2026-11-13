@@ -148,6 +148,10 @@ jobs:
           test "$(git -C "$RUNTIME/luvit-src" rev-parse HEAD)" = 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
           (cd "$RUNTIME/luvit-src" && "$RUNTIME/lit" make . "$RUNTIME/luvit" "$LUVI_BIN")
           "$RUNTIME/luvit" --version | tee "$RUNNER_TEMP/luvit-version.txt"
+          echo "Installing Molly's version-pinned Luvit transport dependencies."
+          "$RUNTIME/lit" install
+          test -f deps/coro-net.lua
+          test -f deps/coro-http.lua
           echo "$RUNTIME" >> "$GITHUB_PATH"
 
       - name: Prepare temporary test artifacts

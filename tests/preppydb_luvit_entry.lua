@@ -11,6 +11,14 @@ local uv = assert(require("uv"))
 assert(type(uv.run) == "function")
 print("Luvit uv module: OK")
 
+local net = assert(require("coro-net"))
+assert(type(net.connect) == "function")
+print("Luvit coro-net dependency: OK")
+
+local http_client = assert(require("coro-http"))
+assert(type(http_client.request) == "function")
+print("Luvit coro-http dependency: OK")
+
 package.loaded.http = http
 package.loaded.uv = uv
 
