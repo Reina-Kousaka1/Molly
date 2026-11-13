@@ -56,7 +56,7 @@ cursors, counts and request arguments. A mock test covers identifiers above
 2^53 and bad responses. The isolated Luvit integration workflow now exercises
 the actual candidate server: admin access, unauthenticated refusal, full
 inventory, epoch-stale page refusal, key/hash pages, and digest equality after
-SIGKILL plus restart. This remains synthetic-only. PreppyDB GitHub Actions run 173 passed the candidate server and client checks on the exact pinned revision. Molly-side hosted integration is still pending its draft PR run.
+SIGKILL plus restart. This remains synthetic-only. PreppyDB GitHub Actions run 173 passed the candidate server and client checks on the exact pinned revision. Molly's hosted Lua/Python run 136 and exact-revision PreppyDB integration run 32 both passed on commit `0837ea716b593f2d54845e0d500e10a374a2852b` (workflow run IDs `43496557683` and `43496557681`). The integration job completed the exact source check/build, Luvit runtime build, full Lua regression suite, real isolated connector/migration/restart/backup-restore checks, and whitespace check. The GitHub job summary reports step results rather than aggregate test counts.
 
 The live migration policy remains unconditionally false. The workflow and
 operator CLI do not open live database connections. No import adapter,
@@ -146,9 +146,13 @@ PreppyDB GitHub Actions run 173 passed an ARM64 cross-build, QEMU tests, and a s
   while opening the collection request. The workflow now explicitly bypasses
   proxies for all 127.0.0.1 requests; the same local test and final hosted run
   passed.
-- Molly Lua 5.1/Luvit and Python tooling was unavailable locally. Molly's
-  complete hosted Lua/Python and exact-PreppyDB integration workflows will be
-  reported after its draft PR is created and Actions finish.
+- Molly Lua 5.1/Luvit and Python tooling was unavailable locally. The hosted
+  Lua/Python workflow run 136 (43496557683) passed. The exact-PreppyDB
+  integration workflow run 32 (43496557681) passed every step, including
+  building the pinned candidate server and Luvit runtime, the full native Lua
+  5.1 regression suite, isolated connector/migration/restart/backup-restore
+  checks, and whitespace validation. GitHub's job summary does not publish
+  aggregate test counts. The integration uses synthetic databases only.
 - GitHub's ARM64 job is QEMU-based, not Raspberry Pi hardware. No production
   databases, local Docker containers, services, or Raspberry Pi were accessed.
 ## Remaining release blockers
@@ -156,8 +160,9 @@ PreppyDB GitHub Actions run 173 passed an ARM64 cross-build, QEMU tests, and a s
 - Policy sign-off for application-owned wallet fields in the canonical guild document remains open because PreppyDB PR #2 is still draft; database-owned economy features and dedicated wallet/balance collections remain prohibited, and no bypass is implemented.
 - SeaWorld's new library export is not integrated into Molly's socket
   transport; writer quiescence across all possible clients is unproven.
-- The target inventory endpoint must be released and its final Molly Luvit
-  integration CI must pass.
+- The target inventory endpoint remains a draft and must be reviewed/released;
+  Molly's final candidate-revision Luvit integration CI has passed, but that is
+  not a release or production-compatibility qualification.
 - Source and target need an agreed, versioned semantic serialization for
   independent record-by-record comparison.
 - Molly's actual persistence documents need an approved, complete export map;
