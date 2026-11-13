@@ -47,6 +47,16 @@ local function store_read(active_store, guild)
   return value
 end
 
+local function request_async(client, method, path)
+  local thread = coroutine.running()
+  local finished, result, failure = false, nil, nil
+  client:call_async(method, path, nil, function(data, err)
+    result, failure, finished = data, err, true
+    if thread then coroutine.resume(thread) end
+  end)
+  if not finished then coroutine.yield() end
+  return result, failure
+end
 local function test(label, fn)
   await(label, fn)
   io.stdout:write("ok - " .. label .. "\n")
@@ -114,6 +124,54 @@ test("Molly guild/global store read, write and multi-guild isolation", function(
     return true, "global", true
   end)
   assert(global_ok)
+end)
+
+test("administrator inventory is complete, hashed, and epoch-bound", function()
+  local inventory, inventory_error = request_async(connector.client, "GET", "/v1/inventory")
+  assert(inventory and not inventory_error)
+  assert(inventory.complete == true and type(inventory.sha256) == "string" and #inventory.sha256 == 64)
+  assert(type(inventory.sequence) == "string" and inventory.sequence:match("^%d+$"))
+  assert(type(inventory.generation) == "string" and inventory.generation:match("^%d+$"))
+  assert(type(inventory.document_count) == "string" and inventory.document_count:match("^%d+$"))
+  local found_state = false
+  for _, collection in ipairs(inventory.collections) do
+    if collection.name == "molly_guild_state" then
+      found_state = true
+      assert(type(collection.documents) == "string" and collection.documents:match("^%d+$"))
+      assert(#collection.documents_sha256 == 64 and #collection.metadata_sha256 == 64)
+    end
+  end
+  assert(found_state, "the independently inventoried state collection is missing")
+
+  local key = test_key("inventory-drift")
+  local inserted, insert_error = connector:put("molly_guild_state", key, { marker = "inventory-fixture" })
+  assert(inserted, insert_error and insert_error.code)
+  local stale_path = "/v1/inventory/molly_guild_state/documents?sequence="
+    .. inventory.sequence .. "&generation=" .. inventory.generation .. "&limit=1"
+  local stale, stale_error = request_async(connector.client, "GET", stale_path)
+  assert(not stale and stale_error and stale_error.code == "conflict",
+    "inventory paging must reject a changed target epoch")
+
+  local current, current_error = request_async(connector.client, "GET", "/v1/inventory")
+  assert(current and not current_error and current.document_count ~= inventory.document_count)
+  local page_path = "/v1/inventory/molly_guild_state/documents?sequence="
+    .. current.sequence .. "&generation=" .. current.generation .. "&limit=1"
+  local page, page_error = request_async(connector.client, "GET", page_path)
+  assert(page and not page_error and page.sequence == current.sequence)
+  assert(#page.records == 1 and #page.records[1].sha256 == 64)
+  assert(page.count == "1", "bounded page count must remain an exact decimal string")
+  assert(type(page.records[1].serialized_bytes) == "string"
+    and page.records[1].serialized_bytes:match("^%d+$"))
+
+  local anonymous = assert(client_library.new({
+    url = base_url,
+    timeout = 5000,
+    transport = LuvitTransport.request,
+  }))
+  local denied, denied_error = request_async(anonymous, "GET", "/v1/inventory")
+  assert(not denied and denied_error and denied_error.status == 401,
+    "inventory metadata must require an authenticated admin credential")
+
 end)
 
 test("PreppyDB transaction is atomic across document keys and enforces CAS", function()
@@ -367,6 +425,18 @@ test("manifest migration dry-run, apply, interruption and idempotent resume", fu
   assert(migrated and migrated.value.guild == migration_guild_2)
   local global = connector:get("molly_global_state", global_name)
   assert(global and global.value.entries[1] == "blocked-user")
+end)
+
+test("final persisted inventory is independently recorded for restart reconciliation", function()
+  local inventory, inventory_error = request_async(connector.client, "GET", "/v1/inventory")
+  assert(inventory and not inventory_error and inventory.complete == true)
+  assert(type(inventory.sha256) == "string" and #inventory.sha256 == 64)
+  assert(type(inventory.document_count) == "string" and inventory.document_count:match("^%d+$"))
+  local digest_path = assert(os.getenv("MOLLY_PREPPYDB_INVENTORY_SHA256_FILE"),
+    "restart inventory digest path is required")
+  local digest_file = assert(io.open(digest_path, "w"))
+  assert(digest_file:write(inventory.sha256, string.char(10)))
+  assert(digest_file:close())
 end)
 
 io.stdout:write("PreppyDB real-server integration: pass\n")

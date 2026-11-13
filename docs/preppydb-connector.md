@@ -193,3 +193,22 @@ There is not yet a qualified end-to-end migration run against real SeaWorld and
 PreppyDB data, a restore rehearsal, a cutover runbook, or a reverse migration.
 After any PreppyDB writes, rollback to SeaWorld requires stopping writes and a
 separately tested reconciliation; it is not automatically lossless.
+
+### V3 independent inventory candidate
+
+The Molly V3 branch adds client methods for PreppyDB's candidate
+administrator-only /v1/inventory and epoch-bound document page endpoints.
+Large sequence, generation, count and size values are decimal strings so Lua
+5.1 preserves exact u64 values. The candidate real-server workflow verifies
+the returned logical digest across a synthetic process restart. This does not
+make the V2 importer live: it still requires synthetic adapters, the endpoint
+is not released, inventory pages contain no document values, source export is
+not connected to Molly's SeaWorld transport, and no semantic cross-database
+digest/reconciliation protocol exists.
+The current policy forbids database-managed economy primitives and dedicated
+wallet/balance collections. PR #2's storage contract describes
+application-owned wallet, journal, and receipt fields inside one guild
+document as the supported shape; this inventory endpoint itself does not
+grant policy approval. Because PR #2 remains draft, scope sign-off remains a
+fail-closed blocker. If maintainers intend a broader ban on application-owned
+currency data, no economy data may be imported.

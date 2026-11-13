@@ -13,6 +13,7 @@ for suite in \
   tests/test.lua \
   tests/seaworld_driver.lua \
   tests/preppydb_connector.lua \
+  tests/preppydb_inventory.lua \
   tests/preppydb_async_connector.lua \
   tests/preppydb_store.lua \
   tests/seaworld_preppydb_migration.lua \

@@ -793,6 +793,102 @@ function Client:count(collection)
   return info.documents
 end
 
+local MAX_U64_TEXT = "18446744073709551615"
+
+local function valid_u64_text(value)
+  if type(value) ~= "string" or not value:match("^%d+$") then return false end
+  if #value > 1 and value:sub(1, 1) == "0" then return false end
+  if #value > #MAX_U64_TEXT then return false end
+  if #value == #MAX_U64_TEXT and value > MAX_U64_TEXT then return false end
+  return true
+end
+
+local function valid_sha256(value)
+  return type(value) == "string" and #value == 64 and value:match("^[0-9a-f]+$") ~= nil
+end
+
+local function dense_array(value)
+  if type(value) ~= "table" then return false end
+  if getmetatable(value) == array_mt then return true end
+  local count, highest = 0, 0
+  for key in pairs(value) do
+    if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false end
+    count = count + 1
+    if key > highest then highest = key end
+  end
+  return count > 0 and count == highest
+end
+
+--- Read the administrator-only, independently computed full-state inventory.
+-- Counts, sizes, sequence and generation are preserved as decimal strings.
+function Client:inventory()
+  local data, err = self:call("GET", "/v1/inventory")
+  if not data then return nil, err end
+  if type(data) ~= "table" or data.complete ~= true
+    or not valid_u64_text(data.sequence) or not valid_u64_text(data.generation)
+    or not valid_u64_text(data.collection_count) or not valid_u64_text(data.document_count)
+    or not valid_u64_text(data.serialized_bytes) or not valid_sha256(data.sha256)
+    or type(data.snapshot_id) ~= "string" or data.snapshot_id == ""
+    or not dense_array(data.collections) then
+    return nil, { code = "invalid_inventory", retryable = false }
+  end
+  for _, collection in ipairs(data.collections) do
+    if type(collection) ~= "table" or type(collection.name) ~= "string"
+      or not valid_u64_text(collection.documents)
+      or not valid_u64_text(collection.metadata_bytes)
+      or not valid_u64_text(collection.document_bytes)
+      or not valid_sha256(collection.metadata_sha256)
+      or not valid_sha256(collection.documents_sha256) then
+      return nil, { code = "invalid_inventory", retryable = false }
+    end
+  end
+  if tostring(#data.collections) ~= data.collection_count then
+    return nil, { code = "invalid_inventory", retryable = false }
+  end
+  return data
+end
+
+--- Read one epoch-bound page of keys and hashes; document values are never returned.
+function Client:inventory_page(collection, sequence, generation, options)
+  options = options or {}
+  if type(collection) ~= "string" or collection == "" or #collection > 255
+    or not valid_u64_text(sequence) or not valid_u64_text(generation) then
+    return nil, { code = "invalid_inventory_request", retryable = false }
+  end
+  local limit = options.limit or 100
+  if type(limit) ~= "number" or limit ~= math.floor(limit) or limit < 1 or limit > 500
+    or (options.after ~= nil and (type(options.after) ~= "string" or #options.after > 1024)) then
+    return nil, { code = "invalid_inventory_request", retryable = false }
+  end
+  local path = "/v1/inventory/" .. encode_path(collection) .. "/documents?sequence="
+    .. sequence .. "&generation=" .. generation .. "&limit=" .. tostring(limit)
+  if options.after then path = path .. "&after=" .. percent_encode(options.after) end
+  local data, err = self:call("GET", path)
+  if not data then return nil, err end
+  if type(data) ~= "table" or data.sequence ~= sequence or data.generation ~= generation
+    or data.collection ~= collection or not dense_array(data.records)
+    or #data.records > limit or not valid_u64_text(data.count)
+    or tonumber(data.count) ~= #data.records
+    or (data.next_cursor ~= preppydb.null and type(data.next_cursor) ~= "string") then
+    return nil, { code = "invalid_inventory_page", retryable = false }
+  end
+  local previous = options.after
+  for _, record in ipairs(data.records) do
+    if type(record) ~= "table" or type(record.key) ~= "string"
+      or not valid_u64_text(record.serialized_bytes) or not valid_sha256(record.sha256) then
+      return nil, { code = "invalid_inventory_page", retryable = false }
+    end
+    if previous and record.key <= previous then
+      return nil, { code = "invalid_inventory_page", retryable = false }
+    end
+    previous = record.key
+  end
+  if data.next_cursor ~= preppydb.null and (data.next_cursor ~= previous or #data.records ~= limit) then
+    return nil, { code = "invalid_inventory_page", retryable = false }
+  end
+  return data
+end
+
 function Client:batch(collection, operations)
   return self:call(
     "POST",

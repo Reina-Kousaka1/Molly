@@ -90,6 +90,7 @@ if [[ ! "$MOLLY_PREPPYDB_TEST_RUN_ID" =~ ^[0-9]{1,17}$ ]]; then
   exit 1
 fi
 export MOLLY_PREPPYDB_TEST_RUN_ID
+export MOLLY_PREPPYDB_INVENTORY_SHA256_FILE="$TEST_ROOT/inventory-sha256.txt"
 GUILD_3="9${MOLLY_PREPPYDB_TEST_RUN_ID}03"
 MOLLY_PREPPYDB_TEST=integration "$LUVIT_BIN" tests/preppydb_luvit_entry.lua
 
