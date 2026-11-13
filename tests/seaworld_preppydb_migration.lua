@@ -20,7 +20,7 @@ function source:query(query) return true, sources[query.collection] end
 
 local target_rows, writes = {}, 0
 local target = {}
-function target:version() return { api_version = "1.0.0", sync_mode = "always", durable_writes = true } end
+function target:version() return { api_version = "1.0.0", engine = "preppydb", sync_mode = "always", durable_writes = true } end
 function target:get(collection, key)
   local row = target_rows[collection .. "/" .. key]
   if not row then return nil, { code = "not_found", status = 404 } end
