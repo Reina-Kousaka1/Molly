@@ -19,8 +19,16 @@ local http_client = assert(require("coro-http"))
 assert(type(http_client.request) == "function")
 print("Luvit coro-http dependency: OK")
 
+local http_codec = assert(require("http-codec"))
+assert(type(http_codec.encoder) == "function")
+assert(type(http_codec.decoder) == "function")
+print("Luvit HTTP codec dependency: OK")
+
 package.loaded.http = http
 package.loaded.uv = uv
+package.loaded["coro-net"] = net
+package.loaded["coro-http"] = http_client
+package.loaded["http-codec"] = http_codec
 
 -- Keep each native test in the same Luvit runtime context. Only these explicit
 -- repository test entrypoints may be selected by the CI wrapper.
