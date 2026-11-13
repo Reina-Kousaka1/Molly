@@ -63,7 +63,10 @@ local function fixture(options)
     return connection.read, connection.write, connection.socket
   end
   local uv = { new_timer = function() return timer end }
-  local codec = { encoder = function() return function() end, decoder = function() return function() end }
+  local codec = {
+    encoder = function() return function() end end,
+    decoder = function() return function() end end,
+  }
   return Transport.new({ net = client, http_codec = codec, uv = uv }), client, connection, timer,
     function() return connection_count end
 end
