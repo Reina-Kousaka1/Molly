@@ -84,9 +84,14 @@ SeaWorld or store references (enforced by a unit test that scans module
 | --- | --- | --- |
 | `MOLLY_PERSONALITY_ENGINE_ENABLED` | `false` | Feature flag. Only `true`/`false` accepted. |
 | `MOLLY_OLLAMA_URL` | `http://127.0.0.1:11434` | `http://` **origin** only (the built-in Luvit transport does not support TLS): no userinfo, path, query or fragment. Keep it on loopback or a trusted private network. |
-| `MOLLY_OLLAMA_MODEL` | unset | Required when the engine is enabled (e.g. `qwen2.5:7b`). Printable characters only, ≤ 100 chars, no whitespace. |
+| MOLLY_OLLAMA_TEXT_MODEL | qwen2.5:3b | Default text model; printable characters only, ≤ 100 chars, no whitespace. |
+| MOLLY_OLLAMA_VISION_MODEL | qwen3.5:2b | Model for validated images and explicit deep: text requests. |
+| MOLLY_OLLAMA_MODEL | unset | Legacy text override; used only when MOLLY_OLLAMA_TEXT_MODEL is unset. |
+| MOLLY_OLLAMA_THINKING_ENABLED | false | think: is honored only when enabled and /api/show confirms model support. |
 | `MOLLY_OLLAMA_TIMEOUT_MS` | `15000` | 100–120000 ms. Aborts the request; no retries. |
 | `MOLLY_OLLAMA_MAX_RESPONSE_BYTES` | `262144` | 1024–4194304 (4 MiB). Applied before JSON parsing and again at the transport. |
+| MOLLY_OLLAMA_MAX_IMAGE_BYTES | 4194304 | 1024–4194304 bytes; one JPEG, PNG or WebP attachment. |
+| MOLLY_OLLAMA_IMAGE_TIMEOUT_MS | 8000 | 100–30000 ms; HTTPS download from the Discord CDN only. |
 
 Personality-engine configuration errors **never** stop Molly from booting —
 following the same pattern as music configuration. When anything is invalid,
@@ -94,11 +99,11 @@ the engine stays off, the error is logged as
 `personality_engine_config_invalid` (variable names only, never values), and
 the bot starts exactly as before. When valid, `molly.lua` logs
 `personality_engine_prepared`. With the feature enabled, direct mentions use
-the Ollama bridge; other eligible messages retain the deterministic responder.
+the Ollama bridge; other eligible messages retain the deterministic responder. Ordinary text uses the text model; images and explicit deep: text use the vision model. See docs/personality-discord-integration-v1.md for routing and image validation.
 Messages beginning with the guild's configured prefix are left to the shared
 command router, even if they mention Molly as an argument. If prefix settings
 cannot be read, the bridge fails closed for that message. The bridge limits
-requests to a 30-second per-guild/user cooldown and two concurrent generations.
+requests to a 30-second per-guild/user cooldown and one concurrent generation.
 Provider error codes are logged without request text or raw errors. The
 configured transport timeout and response bound apply, with no retries.
 
@@ -114,6 +119,7 @@ configured transport timeout and response bound apply, with no retries.
 | Reply | 600 bytes, `...` suffix when truncated | engine |
 | Ollama messages / message / total | 16 / 4200 B / 16000 B | adapter |
 | Ollama response | `max_response_bytes` (default 256 KiB) | transport + adapter |
+| Image count / bytes | 1 / configured (default 4 MiB) | Discord image loader |
 | Stored memory entries | 20 per scope, 300 bytes each, 1800 B per recall | memory provider |
 
 ## Error model
@@ -179,8 +185,9 @@ migrations exist to roll back.
 
 ## Known limitations and open risks
 
-- **Unverified hardware fit.** No latency, memory or stability measurements on
-  Raspberry Pi ARM64 yet; an LLM may not fit alongside Molly's current workload.
+- **Unverified hardware fit.** The two model weight sizes together exceed 4 GB
+  before runtime overhead. Serial execution and unload requests reduce overlap,
+  but laptop VRAM and Raspberry Pi ARM64 latency/memory still require measurement.
 - **Prompt injection.** Channel content is untrusted input; the persona and
   history filtering reduce but cannot eliminate this. Output needs review
   before any production binding.

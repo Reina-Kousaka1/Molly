@@ -43,9 +43,13 @@ until the manual test below is explicitly approved and completed.
    ```dotenv
    MOLLY_PERSONALITY_ENGINE_ENABLED=false
    MOLLY_OLLAMA_URL=http://<Windows-private-LAN-IP>:11434
-   MOLLY_OLLAMA_MODEL=<an-installed-local-model>
+   MOLLY_OLLAMA_TEXT_MODEL=qwen2.5:3b
+   MOLLY_OLLAMA_VISION_MODEL=qwen3.5:2b
+   MOLLY_OLLAMA_THINKING_ENABLED=false
    MOLLY_OLLAMA_TIMEOUT_MS=15000
    MOLLY_OLLAMA_MAX_RESPONSE_BYTES=262144
+   MOLLY_OLLAMA_MAX_IMAGE_BYTES=4194304
+   MOLLY_OLLAMA_IMAGE_TIMEOUT_MS=8000
    ```
 
 2. Confirm connectivity and the selected model out of band first. Keep Molly's
@@ -54,11 +58,12 @@ until the manual test below is explicitly approved and completed.
    `MOLLY_PERSONALITY_ENGINE_ENABLED=true` locally and restart Molly using the
    operator's normal controlled procedure. Do not edit production settings as
    part of this repository test.
-4. Mention Molly with a harmless prompt. Verify one response in the source
-   channel, then check a repeated delivery of the same message, a second
-   mention by the same user inside 30 seconds, a message from another bot, a
-   webhook, a DM, and a normal prefix/slash command. Verify no duplicate reply
-   and that normal commands/economy behavior still works.
+4. Mention Molly with a harmless text prompt, then test an explicit `deep:`
+   prompt and one supported image. Verify one response in the source channel.
+   Check an unsupported attachment and confirm it is not sent to the text
+   model, then check a repeated delivery of the same message, a second mention
+   by the same user inside 30 seconds, a message from another bot, a webhook, a
+   DM, and a normal prefix/slash command. Verify normal commands/economy work.
 5. With Ollama stopped only if the operator considers that safe, verify the
    request fails without crashing Molly or blocking commands. Do not repeatedly
    restart the service to induce failures.

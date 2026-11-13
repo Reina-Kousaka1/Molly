@@ -15,8 +15,9 @@ end
 local function setup(options)
   options = options or {}
   local queue, sent = {}, {}
-  local engine = { calls = 0, generate = function(self, request)
+  local engine = { calls = 0, requests = {}, generate = function(self, request)
     self.calls = self.calls + 1
+    self.requests[#self.requests + 1] = request
     if options.failure then error("mock timeout") end
     if options.invalid then return nil, { code = "invalid_response" } end
     return "A safe Molly reply 💗"
@@ -24,9 +25,10 @@ local function setup(options)
   local bridge = Bridge.new({ enabled = options.enabled ~= false, bot_id = "99", engine = engine,
     clock = options.clock or function() return options.now or 100 end,
     is_prefix_command = options.is_prefix_command,
+    image_loader = options.image_loader,
     spawn = options.spawn or function(fn) queue[#queue + 1] = fn end,
     send = function(channel, content) sent[#sent + 1] = { channel = channel, content = content }; return true end,
-    cooldown_seconds = 30, max_parallel = 2, max_cooldown_entries = 10,
+    cooldown_seconds = 30, max_parallel = options.max_parallel or 1, max_cooldown_entries = 10,
     recent_message_ttl = options.recent_message_ttl, max_recent_messages = options.max_recent_messages })
   return bridge, engine, queue, sent
 end
@@ -77,13 +79,15 @@ test("message deduplication expires and its cache remains bounded", function()
   assert(bridge:on_message(message("<@99> second", { id = "1002", author = { id = "31" } })))
   assert(bridge.recent_message_count == 1)
 end)
-test("parallel work is bounded", function()
+test("only one request is accepted by default", function()
   local bridge, _, queue = setup()
   assert(bridge:on_message(message("<@99> one", { id = "1001", author = { id = "30" } })))
-  assert(bridge:on_message(message("<@99> two", { id = "1002", author = { id = "31" } })))
-  assert(not bridge:on_message(message("<@99> three", { id = "1003", author = { id = "32" } })))
-  assert(bridge.parallel == 2 and #queue == 2)
-  queue[1](); queue[2](); assert(bridge.parallel == 0)
+  local accepted, reason = bridge:on_message(message("<@99> two", { id = "1002", author = { id = "31" } }))
+  assert(not accepted and reason == "busy")
+  assert(bridge.parallel == 1 and #queue == 1)
+  queue[1](); assert(bridge.parallel == 0)
+  local duplicate, duplicate_reason = bridge:on_message(message("<@99> two", { id = "1002", author = { id = "31" } }))
+  assert(not duplicate and duplicate_reason == "duplicate", "a busy gateway event must not become a delayed generation on replay")
 end)
 test("prefix commands after an explicit mention are left to command handling", function()
   local bridge = setup()
@@ -145,6 +149,62 @@ test("successful mock response sends one bounded reply", function()
   assert(bridge:on_message(message("<@99> hi")))
   queue[1]()
   assert(#sent == 1 and sent[1].channel == "20" and #sent[1].content <= 600)
+end)
+
+test("image attachments are passed only after the image loader validates them", function()
+  local loader = { prepare = function(_, attachments)
+    assert(#attachments == 1)
+    return { "AQIDBA==" }
+  end }
+  local bridge, engine, queue, sent = setup({ image_loader = loader })
+  local request = message("<@99> what is this?", {
+    attachments = { { filename = "image.png" } },
+  })
+  assert(bridge:on_message(request))
+  queue[1]()
+  assert(engine.calls == 1 and engine.requests[1].images[1] == "AQIDBA==")
+  assert(engine.requests[1].content == "what is this?")
+  assert(#sent == 1)
+end)
+
+test("a direct mention with an image and no caption is accepted", function()
+  local loader = { prepare = function() return { "AQIDBA==" } end }
+  local bridge, engine, queue = setup({ image_loader = loader })
+  assert(bridge:on_message(message("<@99>", { attachments = { { filename = "image.png" } } })))
+  queue[1]()
+  assert(engine.calls == 1 and engine.requests[1].images[1] == "AQIDBA==")
+  assert(engine.requests[1].content == "Please describe the image I attached.")
+end)
+
+test("invalid or unavailable images never reach the text model and receive a safe fallback", function()
+  local invalid = { prepare = function() return nil, "image_content_mismatch" end }
+  local bridge, engine, queue, sent = setup({ image_loader = invalid })
+  assert(bridge:on_message(message("<@99> describe this", { attachments = { { filename = "bad.png" } } })))
+  queue[1]()
+  assert(engine.calls == 0 and #sent == 1)
+  assert(sent[1].content:find("couldn't safely read", 1, true))
+
+  bridge, engine, queue, sent = setup()
+  assert(bridge:on_message(message("<@99> describe this", { attachments = { { filename = "photo.png" } } })))
+  queue[1]()
+  assert(engine.calls == 0 and #sent == 1)
+  assert(sent[1].content:find("couldn't safely read", 1, true))
+end)
+
+test("vision model failure never retries a request as text", function()
+  local queue, calls, sent = {}, 0, {}
+  local bridge = Bridge.new({ enabled = true, bot_id = "99",
+    image_loader = { prepare = function() return { "AQIDBA==" } end },
+    engine = { generate = function(_, request)
+      calls = calls + 1
+      assert(request.images ~= nil)
+      return nil, { code = "model_not_found" }
+    end },
+    spawn = function(fn) queue[#queue + 1] = fn end,
+    send = function(_, content) sent[#sent + 1] = content; return true end })
+  assert(bridge:on_message(message("<@99> what is here?", { attachments = { { filename = "photo.jpg" } } })))
+  queue[1]()
+  assert(calls == 1 and #sent == 1 and sent[1]:find("couldn't safely read", 1, true))
 end)
 test("Discord send failures release capacity and do not escape the bridge", function()
   local queue, warnings = {}, 0

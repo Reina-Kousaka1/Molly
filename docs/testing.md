@@ -28,13 +28,18 @@ These tests verify Molly's client behavior only; they do not establish
 SeaWorld's configured limit or server-side transaction semantics.
 
 `tests/personality_engine.lua` covers the disabled-by-default Personality
-Engine V1: configuration validation, the Ollama adapter against a simulated
-transport-level Ollama server (request shape, timeouts, HTTP status classes,
-malformed/empty/oversized responses), engine gating, history filtering, prompt
-budgeting, reply sanitization, and the PreppyDB memory provider against a
-synthetic in-memory CAS connector. `tests/personality_luvit_transport.lua`
-exercises the bounded Luvit transport with stubbed `coro-net`, `http-codec`
-and `uv`. No live Ollama, Discord, PreppyDB or SeaWorld service is contacted.
+Engine V1: dual-model defaults, the Ollama adapter against simulated responses,
+image payload bounds, Thinking capability checks, engine gating, history
+filtering, prompt budgeting, reply sanitization, and the PreppyDB memory
+provider against a synthetic in-memory CAS connector.
+`tests/personality_model_router.lua` checks model selection, explicit deep/think
+routes, model-missing fallback, timeout behavior, no image-to-text downgrade,
+single-generation locking and safe performance metrics.
+`tests/personality_vision.lua` checks Discord CDN allowlisting, MIME/extension/
+signature/size agreement and transient base64 preparation. No live Ollama,
+Discord, PreppyDB or SeaWorld service is contacted by these Lua 5.1 tests.
+`tests/personality_luvit_transport.lua` exercises the bounded Luvit transport
+with stubbed `coro-net`, `http-codec` and `uv`.
 
 `tests/stress.lua`'s default profile covers 100, 500, 1,000, 5,000, and 10,000
 synthetic ledger operations. It also compares journal rotation implementations
@@ -55,9 +60,9 @@ SeaWorld performance result.
 ## Luvit and library-dependent tests
 
 `tests/run_luvit.sh` runs the Luvit JSON frame-boundary test, mocked Lavalink
-client tests, mocked Discord registration tests, and a direct-mention
-Ollama/Discord E2E test over a real Luvit HTTP socket to an ephemeral local
-mock server. Run it with a Luvit runtime and required Lua modules on the
+client tests, mocked Discord registration tests, a no-network HTTPS image
+transport allowlist check, and a direct-mention Ollama/Discord E2E test over a
+real Luvit HTTP socket to an ephemeral local mock server. Run it with a Luvit runtime and required Lua modules on the
 runtime's normal search path:
 
 ```sh
@@ -73,8 +78,10 @@ relative `require()` context. The versioned workflow verifies the JSON and HTTP
 module versions and sets both variables. The Python harness binds only to
 `127.0.0.1` on an OS-assigned port, returns deterministic Ollama chat responses,
 including header/body timeouts and a provider error, and verifies request
-count/order without printing prompts. The test does not start Ollama, connect to
-Discord, or contact an external service. Run the standalone E2E with:
+count/order without printing prompts. The image transport check rejects all
+non-allowlisted URLs before opening a socket; it does not contact Discord's
+CDN. The E2E does not start Ollama, connect to Discord, or contact an external
+service. Run the standalone E2E with:
 
 ```sh
 LUVIT_BIN=./runtime/luvit \

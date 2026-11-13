@@ -79,14 +79,28 @@ function Config.load(env)
   local engine_enabled = boolean(read(env, "MOLLY_PERSONALITY_ENGINE_ENABLED"), false, personality_errors, "MOLLY_PERSONALITY_ENGINE_ENABLED")
   local ollama_url = trim(read(env, "MOLLY_OLLAMA_URL")) or "http://127.0.0.1:11434"
   if not origin_url(ollama_url) then personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_URL"; ollama_url = "http://127.0.0.1:11434" end
-  local ollama_model = trim(read(env, "MOLLY_OLLAMA_MODEL"))
-  if ollama_model and (ollama_model:find("[%s%z\1-\31\127]") ~= nil or #ollama_model > 100) then
-    personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_MODEL"
-    ollama_model = nil
+  local ollama_text_model = trim(read(env, "MOLLY_OLLAMA_TEXT_MODEL"))
+  local legacy_ollama_model = trim(read(env, "MOLLY_OLLAMA_MODEL"))
+  local text_model_variable = "MOLLY_OLLAMA_TEXT_MODEL"
+  if not ollama_text_model and legacy_ollama_model then
+    ollama_text_model = legacy_ollama_model
+    text_model_variable = "MOLLY_OLLAMA_MODEL"
   end
-  if engine_enabled and not ollama_model then personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_MODEL" end
+  ollama_text_model = ollama_text_model or "qwen2.5:3b"
+  if ollama_text_model:find("[%s%z\1-\31\127]") ~= nil or #ollama_text_model > 100 then
+    personality_errors[#personality_errors + 1] = text_model_variable
+    ollama_text_model = "qwen2.5:3b"
+  end
+  local ollama_vision_model = trim(read(env, "MOLLY_OLLAMA_VISION_MODEL")) or "qwen3.5:2b"
+  if ollama_vision_model:find("[%s%z\1-\31\127]") ~= nil or #ollama_vision_model > 100 then
+    personality_errors[#personality_errors + 1] = "MOLLY_OLLAMA_VISION_MODEL"
+    ollama_vision_model = "qwen3.5:2b"
+  end
+  local ollama_thinking_enabled = boolean(read(env, "MOLLY_OLLAMA_THINKING_ENABLED"), false, personality_errors, "MOLLY_OLLAMA_THINKING_ENABLED")
   local ollama_timeout_ms = positive_integer(read(env, "MOLLY_OLLAMA_TIMEOUT_MS"), 15000, 100, 120000, personality_errors, "MOLLY_OLLAMA_TIMEOUT_MS")
   local ollama_max_bytes = positive_integer(read(env, "MOLLY_OLLAMA_MAX_RESPONSE_BYTES"), 262144, 1024, 4 * 1024 * 1024, personality_errors, "MOLLY_OLLAMA_MAX_RESPONSE_BYTES")
+  local ollama_max_image_bytes = positive_integer(read(env, "MOLLY_OLLAMA_MAX_IMAGE_BYTES"), 4 * 1024 * 1024, 1024, 4 * 1024 * 1024, personality_errors, "MOLLY_OLLAMA_MAX_IMAGE_BYTES")
+  local ollama_image_timeout_ms = positive_integer(read(env, "MOLLY_OLLAMA_IMAGE_TIMEOUT_MS"), 8000, 100, 30000, personality_errors, "MOLLY_OLLAMA_IMAGE_TIMEOUT_MS")
   local guild_members_intent = boolean(read(env, "MOLLY_GUILD_MEMBERS_INTENT"), false, errors, "MOLLY_GUILD_MEMBERS_INTENT")
   local updater_url, updater_token = trim(read(env, "MOLLY_UPDATER_URL")), trim(read(env, "MOLLY_UPDATER_TOKEN"))
   if not local_updater_url(updater_url) then errors[#errors + 1] = "MOLLY_UPDATER_URL" end
@@ -110,7 +124,12 @@ function Config.load(env)
         configuration_errors = personality_errors,
         ollama = {
           url = ollama_url:gsub("/$", ""),
-          model = ollama_model,
+          model = ollama_text_model,
+          text_model = ollama_text_model,
+          vision_model = ollama_vision_model,
+          thinking_enabled = ollama_thinking_enabled,
+          max_image_bytes = ollama_max_image_bytes,
+          image_timeout_ms = ollama_image_timeout_ms,
           timeout_ms = ollama_timeout_ms,
           max_response_bytes = ollama_max_bytes,
         },

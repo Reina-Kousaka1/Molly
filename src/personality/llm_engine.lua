@@ -246,6 +246,13 @@ function Engine:generate(request)
     return nil, error_value("content_too_large", { limit = self.max_content_chars })
   end
 
+  local images = request.images
+  if images ~= nil then
+    if type(images) ~= "table" or #images ~= 1 or type(images[1]) ~= "string"
+      or #images[1] < 4 or #images[1] > 4 * math.ceil(4 * 1024 * 1024 / 3) then
+      return nil, error_value("invalid_request")
+    end
+  end
   local history = normalize_history(request.history, self)
   if not history then return nil, error_value("invalid_request") end
 
@@ -253,6 +260,7 @@ function Engine:generate(request)
 
   local messages, memory_used, prompt_chars = self:_assemble(content, history, memory_entries)
   if not messages then return nil, error_value("content_too_large") end
+  if images then messages[#messages].images = images end
 
   local called, result, provider_err = pcall(self.provider.generate, self.provider, messages, {})
   if not called then

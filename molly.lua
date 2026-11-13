@@ -48,6 +48,8 @@ local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
 local Personality = require("src.personality.engine")
 local PersonalityDiscordBridge = require("src.personality.discord_bridge")
+local PersonalityModelRouter = require("src.personality.model_router")
+local DiscordImages = require("src.personality.discord_images")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local SettingsCommands = require("src.commands.settings")
@@ -124,23 +126,53 @@ if config.personality.engine.enabled then
   local Ollama = require("src.personality.ollama")
   local EngineV1 = require("src.personality.llm_engine")
   local transport_loaded, OllamaTransport = pcall(require, "src.personality.luvit_transport")
-  local adapter, adapter_error = Ollama.new({
+  local text_adapter, adapter_error = Ollama.new({
     url = config.personality.engine.ollama.url,
-    model = config.personality.engine.ollama.model,
+    model = config.personality.engine.ollama.text_model,
     timeout_ms = config.personality.engine.ollama.timeout_ms,
     max_response_bytes = config.personality.engine.ollama.max_response_bytes,
     transport = transport_loaded and OllamaTransport.request or nil,
   })
-  if adapter then
-    ollama_engine = EngineV1.new({ enabled = true, provider = adapter, provider_name = "ollama", logger = logger })
+  local vision_adapter, vision_error = Ollama.new({
+    url = config.personality.engine.ollama.url,
+    model = config.personality.engine.ollama.vision_model,
+    timeout_ms = config.personality.engine.ollama.timeout_ms,
+    max_response_bytes = config.personality.engine.ollama.max_response_bytes,
+    transport = transport_loaded and OllamaTransport.request or nil,
+  })
+  local router, router_error
+  if text_adapter and vision_adapter then
+    router, router_error = PersonalityModelRouter.new({
+      text_provider = text_adapter,
+      vision_provider = vision_adapter,
+      thinking_enabled = config.personality.engine.ollama.thinking_enabled,
+      logger = logger,
+    })
+  end
+  local image_transport_loaded, ImageTransport = pcall(require, "src.personality.discord_image_transport")
+  local image_loader
+  if image_transport_loaded then
+    image_loader = DiscordImages.new({
+      max_bytes = config.personality.engine.ollama.max_image_bytes,
+      timeout_ms = config.personality.engine.ollama.image_timeout_ms,
+      download = ImageTransport.download,
+    })
+  else
+    logger:warn("personality_image_transport_unavailable", { detail = "https_client_unavailable" })
+  end
+  if router then
+    ollama_engine = EngineV1.new({ enabled = true, provider = router, provider_name = "ollama_dual", logger = logger })
     local status = ollama_engine:status()
     logger:info("personality_engine_prepared", {
       enabled = status.enabled, ready = status.ready, provider = status.provider,
-      model = config.personality.engine.ollama.model,
+      text_model = config.personality.engine.ollama.text_model,
+      vision_model = config.personality.engine.ollama.vision_model,
+      thinking_enabled = config.personality.engine.ollama.thinking_enabled,
+      image_transport_ready = image_loader ~= nil,
       direct_mention_bridge_ready = status.ready, memory = status.memory,
     })
     ollama_bridge = PersonalityDiscordBridge.new({ enabled = status.ready, engine = ollama_engine,
-      logger = logger, cooldown_seconds = 30, max_parallel = 2,
+      logger = logger, cooldown_seconds = 30, max_parallel = 1, image_loader = image_loader,
       is_prefix_command = function(message)
         if not prefix_commands then return nil end
         return prefix_commands:has_prefix(message)
@@ -151,7 +183,9 @@ if config.personality.engine.enabled then
         return rest:send_message(channel, { content = message })
       end })
   else
-    logger:error("personality_engine_unavailable", { detail = tostring(adapter_error) })
+    logger:error("personality_engine_unavailable", {
+      detail = tostring(router_error or adapter_error or vision_error or "initialization_failed"),
+    })
   end
 end
 local app = App.new({ logger = logger, seaworld = persistence, persistence = persistence,

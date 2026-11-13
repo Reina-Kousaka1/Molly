@@ -17,6 +17,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PROMPTS = [
     "say hello",
+    "compare this carefully",
+    "what is in this picture?",
     "simulate header timeout",
     "simulate body timeout",
     "simulate provider error",
@@ -53,7 +55,7 @@ def handler_for(state: State):
                 pass
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path != "/api/chat":
+            if self.path not in {"/api/chat", "/api/show"}:
                 with state.lock:
                     state.problems.append("unexpected_path")
                 self.respond(404, {"error": "unexpected mock path"})
@@ -64,14 +66,28 @@ def handler_for(state: State):
                 if length < 0 or length > 65536:
                     raise ValueError("invalid_length")
                 request = json.loads(self.rfile.read(length))
-                messages = request.get("messages")
-                prompt = messages[-1].get("content") if isinstance(messages, list) and messages else None
-                if not isinstance(prompt, str):
-                    raise ValueError("invalid_prompt")
             except (ValueError, TypeError, json.JSONDecodeError):
                 with state.lock:
                     state.problems.append("invalid_request")
                 self.respond(400, {"error": "invalid mock request"})
+                return
+
+            if self.path == "/api/show":
+                if request.get("model") != "molly-e2e-vision":
+                    with state.lock:
+                        state.problems.append("unexpected_show_model")
+                    self.respond(400, {"error": "unexpected show model"})
+                    return
+                self.respond(200, {"thinking": {"values": ["low", "high"], "default": "high"}})
+                return
+
+            messages = request.get("messages")
+            prompt = messages[-1].get("content") if isinstance(messages, list) and messages else None
+            images = messages[-1].get("images", []) if isinstance(messages, list) and messages else []
+            if not isinstance(prompt, str) or not isinstance(images, list):
+                with state.lock:
+                    state.problems.append("invalid_prompt")
+                self.respond(400, {"error": "invalid mock prompt"})
                 return
 
             with state.lock:
@@ -80,13 +96,15 @@ def handler_for(state: State):
                     "stream": request.get("stream"),
                     "prompt": prompt,
                     "roles": [item.get("role") for item in messages if isinstance(item, dict)],
+                    "image_count": len(images),
+                    "think": request.get("think"),
                 })
 
             if prompt == "simulate header timeout":
                 time.sleep(0.8)
-                self.respond(200, {"model": "molly-e2e-mock", "message": {"role": "assistant", "content": "late reply"}})
+                self.respond(200, {"model": request.get("model"), "message": {"role": "assistant", "content": "late reply"}})
             elif prompt == "simulate body timeout":
-                body = json.dumps({"model": "molly-e2e-mock", "message": {
+                body = json.dumps({"model": request.get("model"), "message": {
                     "role": "assistant", "content": "late body reply",
                 }}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 self.send_response(200)
@@ -103,12 +121,20 @@ def handler_for(state: State):
             elif prompt == "simulate provider error":
                 self.respond(503, {"error": "mock provider unavailable"})
             elif prompt == "say hello":
-                self.respond(200, {"model": "molly-e2e-mock", "message": {
+                self.respond(200, {"model": request.get("model"), "message": {
                     "role": "assistant",
                     "content": "bestie @everyone <@123> here's a real transport check 💗",
                 }})
+            elif prompt == "compare this carefully":
+                self.respond(200, {"model": request.get("model"), "message": {
+                    "role": "assistant", "content": "Molly used the vision route 🎀",
+                }})
+            elif prompt == "what is in this picture?":
+                self.respond(200, {"model": request.get("model"), "message": {
+                    "role": "assistant", "content": "Molly checked the picture 🎀",
+                }})
             elif prompt == "recover please":
-                self.respond(200, {"model": "molly-e2e-mock", "message": {
+                self.respond(200, {"model": request.get("model"), "message": {
                     "role": "assistant", "content": "Molly recovered after a provider failure 🎀",
                 }})
             else:
@@ -166,15 +192,24 @@ def main() -> int:
     if len(requests) != len(EXPECTED_PROMPTS):
         print(f"expected {len(EXPECTED_PROMPTS)} mock HTTP requests; received {len(requests)}", file=sys.stderr)
         return 1
+    expected_models = [
+        "molly-e2e-text", "molly-e2e-vision", "molly-e2e-vision",
+        "molly-e2e-text", "molly-e2e-text", "molly-e2e-text", "molly-e2e-text",
+    ]
+    expected_images = [0, 0, 1, 0, 0, 0, 0]
+    expected_think = [None, False, False, None, None, None, None]
     for index, (request, expected) in enumerate(zip(requests, EXPECTED_PROMPTS), start=1):
-        if request["model"] != "molly-e2e-mock" or request["stream"] is not False or request["prompt"] != expected:
+        if request["model"] != expected_models[index - 1] or request["stream"] is not False or request["prompt"] != expected:
             print(f"mock request {index} did not match its expected model/protocol scenario", file=sys.stderr)
             return 1
         if request["roles"] != ["system", "user"]:
             print(f"mock request {index} did not contain the expected bounded prompt roles", file=sys.stderr)
             return 1
+        if request["image_count"] != expected_images[index - 1] or request["think"] != expected_think[index - 1]:
+            print(f"mock request {index} did not match expected image/thinking controls", file=sys.stderr)
+            return 1
 
-    print(f"mock Ollama server: {len(requests)} loopback HTTP requests verified; bot/DM/non-mention/duplicate filters produced no extra requests")
+    print(f"mock Ollama server: {len(requests)} loopback chat requests plus verified vision capability query; text, deep and image routes, failures and recovery passed")
     return 0
 
 

@@ -88,7 +88,11 @@ test("config defaults the personality engine to disabled and inert", function()
   assert(config.personality.engine.ollama.url == "http://127.0.0.1:11434")
   assert(config.personality.engine.ollama.timeout_ms == 15000)
   assert(config.personality.engine.ollama.max_response_bytes == 262144)
-  assert(config.personality.engine.ollama.model == nil)
+  assert(config.personality.engine.ollama.text_model == "qwen2.5:3b")
+  assert(config.personality.engine.ollama.vision_model == "qwen3.5:2b")
+  assert(config.personality.engine.ollama.thinking_enabled == false)
+  assert(config.personality.engine.ollama.max_image_bytes == 4 * 1024 * 1024)
+  assert(config.personality.engine.ollama.image_timeout_ms == 8000)
 end)
 
 test("config validates engine settings without ever failing the boot", function()
@@ -105,15 +109,31 @@ test("config validates engine settings without ever failing the boot", function(
   }))
   assert(config.personality.engine.enabled == true)
   assert(config.personality.engine.ollama.model == "qwen2.5:7b")
+  assert(config.personality.engine.ollama.text_model == "qwen2.5:7b")
+  assert(config.personality.engine.ollama.vision_model == "qwen3.5:2b")
   assert(config.personality.engine.ollama.url == "http://192.168.1.10:11434")
   assert(config.personality.engine.ollama.timeout_ms == 30000)
   assert(config.personality.engine.ollama.max_response_bytes == 131072)
 
-  -- Enabled but no model: engine stays off, boot continues, error is reported.
+  -- The documented defaults are sufficient when no model override is supplied.
   config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSONALITY_ENGINE_ENABLED = "true" }))
-  assert(config.personality.engine.enabled == false)
+  assert(config.personality.engine.enabled == true)
   assert(config.personality.engine.requested == true)
-  assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MODEL"))
+  assert(config.personality.engine.ollama.text_model == "qwen2.5:3b")
+  assert(config.personality.engine.ollama.vision_model == "qwen3.5:2b")
+
+  config = assert(Config.load({
+    MOLLY_DISCORD_TOKEN = "x", MOLLY_PERSONALITY_ENGINE_ENABLED = "true",
+    MOLLY_OLLAMA_TEXT_MODEL = "custom-text:latest", MOLLY_OLLAMA_VISION_MODEL = "custom-vision:latest",
+    MOLLY_OLLAMA_THINKING_ENABLED = "true", MOLLY_OLLAMA_MAX_IMAGE_BYTES = "2097152",
+    MOLLY_OLLAMA_IMAGE_TIMEOUT_MS = "9000",
+  }))
+  assert(config.personality.engine.enabled == true)
+  assert(config.personality.engine.ollama.text_model == "custom-text:latest")
+  assert(config.personality.engine.ollama.vision_model == "custom-vision:latest")
+  assert(config.personality.engine.ollama.thinking_enabled == true)
+  assert(config.personality.engine.ollama.max_image_bytes == 2097152)
+  assert(config.personality.engine.ollama.image_timeout_ms == 9000)
 
   -- Malformed endpoint, credentials, path, bad bounds: engine stays off.
   for _, bad in ipairs({ "ftp://127.0.0.1:11434", "https://127.0.0.1:11434", "http://user:pass@127.0.0.1:11434", "http://127.0.0.1:11434/api", "::1" }) do
@@ -129,6 +149,10 @@ test("config validates engine settings without ever failing the boot", function(
   assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MAX_RESPONSE_BYTES"))
   config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_OLLAMA_MODEL = "bad\nmodel" }))
   assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MODEL"))
+  config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_OLLAMA_VISION_MODEL = "bad model" }))
+  assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_VISION_MODEL"))
+  config = assert(Config.load({ MOLLY_DISCORD_TOKEN = "x", MOLLY_OLLAMA_MAX_IMAGE_BYTES = "99999999" }))
+  assert(find(table.concat(config.personality.engine.configuration_errors, ","), "MOLLY_OLLAMA_MAX_IMAGE_BYTES"))
 end)
 
 test("configuration errors never abort module loading or leak secrets", function()
@@ -192,9 +216,44 @@ test("the simulated Ollama server receives a well-formed chat request", function
   local body = assert(Json.decode(call.options.body))
   assert(body.model == "qwen2.5:7b")
   assert(body.stream == false)
+  assert(body.keep_alive == "0")
   assert(body.messages[1].role == "system" and body.messages[1].content == "persona")
   assert(body.messages[2].role == "user" and body.messages[2].content == "hallo")
   assert(type(body.options) == "table" and type(body.options.num_predict) == "number")
+end)
+
+test("the Ollama adapter forwards one validated image and optional supported thinking only", function()
+  local server = SimulatedOllama(function(call)
+    if call.url:match("/api/show$") then
+      return { code = 200 }, Json.encode({ thinking = { values = { "low", "high" }, default = "high" } })
+    end
+    if call.url:match("/api/ps$") then return { code = 200 }, Json.encode({ models = {} }) end
+    return { code = 200 }, Json.encode({
+      model = "qwen3.5:2b",
+      message = { role = "assistant", content = "<think>private chain</think>Visible answer", thinking = "never expose this" },
+      total_duration = 123, load_duration = 45,
+    })
+  end)
+  local adapter = assert(Ollama.new({ model = "qwen3.5:2b", transport = server.transport }))
+  local controls = assert(adapter:thinking_control())
+  assert(controls.supported and controls.value == "high")
+  local result = assert(adapter:generate({
+    { role = "user", content = "what is in this?", images = { "AQIDBA==" } },
+  }, { think = "high" }))
+  assert(result.content == "Visible answer")
+  assert(result.total_duration == 123 and result.load_duration == 45)
+  local chat
+  for _, call in ipairs(server.calls) do if call.url:match("/api/chat$") then chat = call end end
+  assert(chat ~= nil)
+  local body = assert(Json.decode(chat.options.body))
+  assert(body.model == "qwen3.5:2b" and body.think == "high" and body.keep_alive == "0")
+  assert(body.messages[1].images[1] == "AQIDBA==")
+
+  local old_server = SimulatedOllama({ content = "okay" })
+  adapter = assert(Ollama.new({ model = "qwen3.5:2b", transport = old_server.transport }))
+  local failed, err = adapter:generate({ { role = "user", content = "think please" } }, { think = true })
+  assert(failed == nil and err.code == "thinking_unsupported")
+  assert(#old_server.calls == 0, "unverified thinking must not reach /api/chat")
 end)
 
 test("adapter timeouts surface as retryable timeout errors", function()
@@ -272,6 +331,21 @@ test("adapter version probe reports connectivity without generating", function()
   assert(status.status == "unavailable")
 end)
 
+test("the adapter reads only bounded VRAM metrics from the Ollama process list", function()
+  local server = SimulatedOllama(function(call)
+    assert(call.method == "GET" and find(call.url, "/api/ps"))
+    return { code = 200 }, Json.encode({ models = {
+      { name = "qwen3.5:2b", size_vram = 123456789, size = 456789012 },
+      { name = "qwen2.5:3b", size_vram = 2000 },
+    } })
+  end)
+  local adapter = assert(Ollama.new({ model = "qwen3.5:2b", transport = server.transport }))
+  local models = assert(adapter:running_models())
+  assert(#models == 2)
+  assert(models[1].name == "qwen3.5:2b" and models[1].size_vram == 123456789)
+  assert(models[2].name == "qwen2.5:3b" and models[2].size_vram == 2000)
+end)
+
 --------------------------------------------------------------------- engine
 
 test("the engine refuses to generate while disabled", function()
@@ -295,6 +369,21 @@ test("the engine validates requests without throwing", function()
   end
   -- malformed requests must not reach the provider
   assert(#server.calls == 0)
+end)
+
+test("engine forwards at most one bounded image to its provider", function()
+  local captured
+  local engine = Engine.new({ enabled = true, provider = { generate = function(_, messages)
+    captured = messages
+    return { content = "I see a picture." }
+  end } })
+  local reply = assert(engine:generate({ content = "what is this?", images = { "AQIDBA==" } }))
+  assert(reply == "I see a picture.")
+  assert(captured[#captured].images[1] == "AQIDBA==")
+  local result, err = engine:generate({ content = "too many", images = { "AQIDBA==", "AQIDBA==" } })
+  assert(result == nil and err.code == "invalid_request")
+  result, err = engine:generate({ content = "malformed", images = { "bad" } })
+  assert(result == nil and err.code == "invalid_request")
 end)
 
 test("engine history is bounded, filtered and flattened into the prompt", function()
@@ -558,14 +647,18 @@ test("persona describes Molly only and stays within engine bounds", function()
   end
 end)
 
-test("new modules never require Discord or persistence internals", function()
-  for _, path in ipairs({ "src/personality/llm_engine.lua", "src/personality/ollama.lua", "src/personality/memory.lua", "src/personality/persona.lua", "src/personality/luvit_transport.lua" }) do
+test("personality service modules never require Discord or persistence internals", function()
+  for _, path in ipairs({ "src/personality/llm_engine.lua", "src/personality/ollama.lua",
+    "src/personality/memory.lua", "src/personality/persona.lua", "src/personality/luvit_transport.lua",
+    "src/personality/model_router.lua", "src/personality/discord_images.lua",
+    "src/personality/discord_image_transport.lua" }) do
     local handle = assert(io.open(path, "rb"))
     local source = handle:read("*a")
     handle:close()
     local lowered = source:lower()
     for module in lowered:gmatch('require%("([^"]+)"') do
-      local allowed = module == "json" or module == "coro-net" or module == "http-codec" or module == "uv"
+      local allowed = module == "json" or module == "coro-net" or module == "http-codec"
+        or module == "https" or module == "uv"
         or module == "src.preppydb.client" or module == "src.personality.persona"
       assert(allowed, path .. " must not require " .. module)
     end
@@ -582,11 +675,17 @@ test("molly.lua connects the opt-in engine through the direct-mention bridge", f
   assert(find(source, "PersonalityDiscordBridge.new"))
   assert(find(source, "ollama_bridge:matches(message)"))
   assert(find(source, "ollama_bridge.on_message"))
+  assert(find(source, "PersonalityModelRouter.new"))
+  assert(find(source, "max_parallel = 1"))
+  assert(find(source, "image_loader = image_loader"))
   assert(not find(source, "ollama_engine:generate"), "Discord events must pass through the bridge")
 end)
 
 test("persona engine modules parse as plain Lua 5.1 source", function()
-  for _, path in ipairs({ "src/personality/persona.lua", "src/personality/ollama.lua", "src/personality/llm_engine.lua", "src/personality/memory.lua", "src/personality/luvit_transport.lua" }) do
+  for _, path in ipairs({ "src/personality/persona.lua", "src/personality/ollama.lua",
+    "src/personality/llm_engine.lua", "src/personality/memory.lua", "src/personality/luvit_transport.lua",
+    "src/personality/model_router.lua", "src/personality/discord_images.lua",
+    "src/personality/discord_image_transport.lua" }) do
     local chunk, err = loadfile(path)
     assert(chunk ~= nil, path .. ": " .. tostring(err))
   end

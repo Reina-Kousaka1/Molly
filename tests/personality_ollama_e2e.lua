@@ -1,5 +1,5 @@
--- End-to-end test: direct Discord mention -> bridge -> engine -> Ollama adapter
--- -> real Luvit HTTP transport -> loopback Python mock server -> Discord send.
+-- End-to-end test: direct Discord mention -> bridge -> shared engine -> dual
+-- model router -> Ollama adapters -> real Luvit HTTP transport -> loopback mock.
 -- No Discord client, Ollama installation, database, or external network is used.
 
 local deps = os.getenv("MOLLY_TEST_DEPS_DIR") or "./deps"
@@ -15,28 +15,53 @@ assert(type(url) == "string" and url:match("^http://127%.0%.0%.1:%d+$"),
 local Transport = require("src.personality.luvit_transport")
 local Ollama = require("src.personality.ollama")
 local Engine = require("src.personality.llm_engine")
+local ModelRouter = require("src.personality.model_router")
 local Bridge = require("src.personality.discord_bridge")
 local uv = require("uv")
+
+local function check(condition, description)
+  if not condition then
+    io.stderr:write("not ok - " .. description .. "\n")
+    os.exit(1)
+  end
+end
 
 local function transport(method, target, options)
   return Transport.request(method, target, options)
 end
 
-local provider, provider_error = Ollama.new({
+local text_provider, text_error = Ollama.new({
   url = url,
-  model = "molly-e2e-mock",
+  model = "molly-e2e-text",
   timeout_ms = 300,
   max_response_bytes = 8192,
   transport = transport,
 })
-assert(provider, "could not create Ollama adapter: " .. tostring(provider_error))
+assert(text_provider, "could not create text adapter: " .. tostring(text_error))
+local vision_provider, vision_error = Ollama.new({
+  url = url,
+  model = "molly-e2e-vision",
+  timeout_ms = 300,
+  max_response_bytes = 8192,
+  transport = transport,
+})
+assert(vision_provider, "could not create vision adapter: " .. tostring(vision_error))
+local router = assert(ModelRouter.new({
+  text_provider = text_provider,
+  vision_provider = vision_provider,
+  thinking_enabled = true,
+}))
 
-local engine = Engine.new({ enabled = true, provider = provider, provider_name = "ollama" })
+local engine = Engine.new({ enabled = true, provider = router, provider_name = "ollama_dual" })
 local sent, warnings = {}, {}
 local bridge = Bridge.new({
   enabled = true,
   bot_id = "999999",
   engine = engine,
+  image_loader = { prepare = function(attachments)
+    assert(type(attachments) == "table" and #attachments == 1)
+    return { "AQIDBA==" }
+  end },
   send = function(channel_id, content)
     sent[#sent + 1] = { channel_id = channel_id, content = content }
     return true
@@ -45,7 +70,7 @@ local bridge = Bridge.new({
     warnings[#warnings + 1] = { event = event, detail = fields and fields.detail }
   end },
   cooldown_seconds = 30,
-  max_parallel = 2,
+  max_parallel = 1,
 })
 
 local function message(id, user_id, content, overrides)
@@ -57,16 +82,16 @@ local function message(id, user_id, content, overrides)
   return value
 end
 
-local function check(condition, description)
-  if not condition then
-    io.stderr:write("not ok - " .. description .. "\n")
-    os.exit(1)
-  end
-end
-
 local function accept(id, user_id, text)
   local accepted, reason = bridge:on_message(message(id, user_id, "<@999999> " .. text))
   check(accepted == true, "bridge accepted " .. text .. " (" .. tostring(reason) .. ")")
+end
+
+local function accept_image(id, user_id, text)
+  local accepted, reason = bridge:on_message(message(id, user_id, "<@999999> " .. text, {
+    attachments = { { filename = "fixture.png" } },
+  }))
+  check(accepted == true, "bridge accepted image request (" .. tostring(reason) .. ")")
 end
 
 -- These must never reach the mock server; Python verifies the total request
@@ -108,24 +133,32 @@ poll:start(10, 10, function()
     check(sent[1].content == "bestie @\226\128\139everyone <\226\128\139@123> here's a real transport check 💗",
       "model output is sanitized and delivered once")
     phase = 2
-    accept("2002", "21", "simulate header timeout")
-  elseif phase == 2 and bridge.parallel == 0 then
-    check(#sent == 1, "timed-out provider request sends no reply")
-    check(#warnings == 1 and warnings[1].detail == "timeout", "transport timeout is diagnosed safely")
+    accept("2002", "21", "deep: compare this carefully")
+  elseif phase == 2 and #sent == 2 then
+    check(sent[2].content == "Molly used the vision route 🎀", "explicit deep route returns one reply")
     phase = 3
-    accept("2003", "22", "simulate body timeout")
-  elseif phase == 3 and bridge.parallel == 0 then
-    check(#sent == 1, "body timeout sends no reply")
-    check(#warnings == 2 and warnings[2].detail == "timeout", "body timeout releases the bridge slot")
+    accept_image("2003", "22", "what is in this picture?")
+  elseif phase == 3 and #sent == 3 then
+    check(sent[3].content == "Molly checked the picture 🎀", "image route returns one reply")
     phase = 4
-    accept("2004", "23", "simulate provider error")
+    accept("2004", "23", "simulate header timeout")
   elseif phase == 4 and bridge.parallel == 0 then
-    check(#sent == 1, "provider HTTP failure sends no reply")
-    check(#warnings == 3 and warnings[3].detail == "provider_error", "provider status is diagnosed safely")
+    check(#sent == 3, "timed-out provider request sends no reply")
+    check(#warnings == 1 and warnings[1].detail == "timeout", "transport timeout is diagnosed safely")
     phase = 5
-    accept("2005", "24", "recover please")
-  elseif phase == 5 and #sent == 2 then
-    check(sent[2].content == "Molly recovered after a provider failure 🎀", "later request recovers normally")
+    accept("2005", "24", "simulate body timeout")
+  elseif phase == 5 and bridge.parallel == 0 then
+    check(#sent == 3, "body timeout sends no reply")
+    check(#warnings == 2 and warnings[2].detail == "timeout", "body timeout releases the bridge slot")
+    phase = 6
+    accept("2006", "25", "simulate provider error")
+  elseif phase == 6 and bridge.parallel == 0 then
+    check(#sent == 3, "provider HTTP failure sends no reply")
+    check(#warnings == 3 and warnings[3].detail == "provider_error", "provider status is diagnosed safely")
+    phase = 7
+    accept("2007", "26", "recover please")
+  elseif phase == 7 and #sent == 4 then
+    check(sent[4].content == "Molly recovered after a provider failure 🎀", "later request recovers normally")
     check(bridge.parallel == 0, "all bridge concurrency reservations are released")
     shutdown(0)
   end
