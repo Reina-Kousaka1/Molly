@@ -2,6 +2,7 @@
 -- one-document-per-store layout into the shared PreppyDB state collections.
 -- Dry-run is the default. The module never deletes or changes source records.
 local Migration = {}
+local Durability = require("src.persistence.preppydb_durability")
 
 local MAX_GUILDS = 10000
 local MAX_GLOBALS = 1000
@@ -155,37 +156,6 @@ local function ensure_target(target, entries, target_json, mode, max_document_by
   return nil, "write_failed"
 end
 
--- A migration may only claim success when the destination acknowledges writes
--- after they are durable. PreppyDB exposes that configuration on /v1/version;
--- this probe turns it into an explicit answer instead of an assumption.
-local function durability_evidence(version)
-  local durability = type(version.durability) == "table" and version.durability or {}
-  local signals = {}
-  local sync_mode = version.sync_mode or durability.sync_mode
-  local durable_writes = version.durable_writes
-  if durable_writes == nil then durable_writes = durability.durable_writes end
-  if type(durable_writes) == "boolean" then signals[#signals + 1] = durable_writes end
-  if sync_mode ~= nil then
-    local normalized = type(sync_mode) == "string" and sync_mode:lower() or nil
-    if normalized == "always" then
-      signals[#signals + 1] = true
-    elseif normalized == "never" or normalized == "none" or normalized == "off"
-      or normalized == "periodic" or normalized == "interval" or normalized == "batch" then
-      signals[#signals + 1] = false
-    else
-      return "unverifiable", "unknown_sync_mode", sync_mode
-    end
-  end
-  if #signals == 0 then return "unverifiable", "durability_not_reported", sync_mode end
-  local durable, weak = false, false
-  for _, signal in ipairs(signals) do
-    if signal then durable = true else weak = true end
-  end
-  if durable and weak then return "unverifiable", "inconsistent_durability", sync_mode end
-  if weak then return "not_durable", "writes_not_synced", sync_mode end
-  return "durable", "durable_writes", sync_mode
-end
-
 --- Probe a PreppyDB connector for durable-write evidence.
 -- Returns true with evidence, or false with `not_durable` when the server says
 -- writes are not synced, and `unverifiable` when it cannot answer at all. The
@@ -205,12 +175,15 @@ function Migration.durability(target)
       reason = type(version_error) == "table" and version_error.code or nil,
     }
   end
-  local state, detail, sync_mode = durability_evidence(version)
-  if state ~= "durable" then return false, { code = state, detail = detail, sync_mode = sync_mode } end
+  local state, detail, sync_mode, durable_writes = Durability.classify(version)
+  if state ~= "durable" then return false, {
+    code = state, detail = detail, sync_mode = sync_mode, durable_writes = durable_writes,
+  } end
   return true, {
     durability = state,
     detail = detail,
     sync_mode = sync_mode,
+    durable_writes = durable_writes,
     api_version = version.api_version,
     engine = version.engine,
   }

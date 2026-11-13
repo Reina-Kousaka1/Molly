@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
-      PREPPYDB_REVISION: 8d944d64698ce614e45eb95b54d78436d7721c66
+      PREPPYDB_REVISION: 8c1bc902f8e5cc898fb8dc7e68603588f2c11b4c
     steps:
       - name: Checkout Molly candidate
         uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Reina-Kousaka1/PreppyDB
-          ref: 8d944d64698ce614e45eb95b54d78436d7721c66
+          ref: 8c1bc902f8e5cc898fb8dc7e68603588f2c11b4c
           path: preppydb
           persist-credentials: false
 
@@ -148,6 +148,10 @@ jobs:
           test "$(git -C "$RUNTIME/luvit-src" rev-parse HEAD)" = 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
           (cd "$RUNTIME/luvit-src" && "$RUNTIME/lit" make . "$RUNTIME/luvit" "$LUVI_BIN")
           "$RUNTIME/luvit" --version | tee "$RUNNER_TEMP/luvit-version.txt"
+          echo "Installing Molly's version-pinned Luvit transport dependencies."
+          "$RUNTIME/lit" install
+          test -f deps/coro-net.lua
+          test -f deps/coro-http.lua
           echo "$RUNTIME" >> "$GITHUB_PATH"
 
       - name: Prepare temporary test artifacts

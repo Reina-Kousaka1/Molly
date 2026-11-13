@@ -20,7 +20,7 @@ function source:query(query) return true, sources[query.collection] end
 
 local target_rows, writes = {}, 0
 local target = {}
-function target:version() return { api_version = "1.0.0", sync_mode = "always" } end
+function target:version() return { api_version = "1.0.0", engine = "preppydb", sync_mode = "always", durable_writes = true } end
 function target:get(collection, key)
   local row = target_rows[collection .. "/" .. key]
   if not row then return nil, { code = "not_found", status = 404 } end
@@ -69,7 +69,8 @@ local invalid_ok, invalid_reason = Migration.run(invalid)
 assert(not invalid_ok and invalid_reason.code == "invalid_manifest")
 
 local conflicting_target = {
-  version = function() return { sync_mode = "always" } end,
+  version = function() return { api_version = "1.0.0", engine = "preppydb",
+    sync_mode = "always", durable_writes = true } end,
   get = function() return { value = { guild = "123", accounts = { u = { wallet = 999 } } }, version = 1 } end,
   transaction = function() error("must not overwrite existing data") end,
 }
@@ -80,7 +81,8 @@ local conflict_ok, conflict_reason = Migration.run({
 assert(not conflict_ok and conflict_reason.code == "target_conflict")
 
 local uncertain_target = {
-  version = function() return { sync_mode = "always" } end,
+  version = function() return { api_version = "1.0.0", engine = "preppydb",
+    sync_mode = "always", durable_writes = true } end,
   get = function() return nil, { code = "not_found", status = 404 } end,
   transaction = function() return nil, { code = "transport_error" } end,
 }
@@ -131,24 +133,34 @@ local function run_against(store, extra)
   return Migration.run(run_options)
 end
 
-local durable_ok, durable_evidence = Migration.durability(memory_target({ api_version = "1.0.0", sync_mode = "always" }))
+local durable_ok, durable_evidence = Migration.durability(memory_target({ api_version = "1.0.0",
+  engine = "preppydb", sync_mode = "always", durable_writes = true }))
 assert(durable_ok and durable_evidence.sync_mode == "always")
 
-local flag_ok, flag_evidence = Migration.durability(memory_target({ durable_writes = true }))
-assert(flag_ok and flag_evidence.detail == "durable_writes")
+local flag_missing_mode_ok, flag_missing_mode = Migration.durability(memory_target({ api_version = "1.0.0",
+  engine = "preppydb", durable_writes = true }))
+assert(not flag_missing_mode_ok and flag_missing_mode.code == "unverifiable")
 
-local nested_ok = Migration.durability(memory_target({ durability = { sync_mode = "always", durable_writes = true } }))
-assert(nested_ok)
+local nested_ok = Migration.durability(memory_target({ api_version = "1.0.0", engine = "preppydb",
+  durability = { sync_mode = "always", durable_writes = true } }))
+assert(not nested_ok)
 
-local unsynced_ok, unsynced = Migration.durability(memory_target({ sync_mode = "periodic", durable_writes = false }))
+local unsynced_ok, unsynced = Migration.durability(memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "periodic", durable_writes = false }))
 assert(not unsynced_ok and unsynced.code == "not_durable")
 
-local inconsistent_target = memory_target({ sync_mode = "always", durable_writes = false })
+local inconsistent_target = memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "always", durable_writes = false })
 local inconsistent_ok, inconsistent = Migration.durability(inconsistent_target)
 assert(not inconsistent_ok and inconsistent.code == "unverifiable" and inconsistent.detail == "inconsistent_durability")
 
 local silent_ok, silent = Migration.durability(memory_target({ api_version = "1.0.0", engine = "preppydb" }))
 assert(not silent_ok and silent.code == "unverifiable" and silent.detail == "durability_not_reported")
+
+local wrong_server_ok, wrong_server = Migration.durability(memory_target({ api_version = "1.0.0",
+  engine = "other-db", sync_mode = "always", durable_writes = true }))
+assert(not wrong_server_ok and wrong_server.code == "unverifiable"
+  and wrong_server.detail == "server_identity_unverified")
 
 local unreachable_ok, unreachable = Migration.durability({
   version = function() return nil, { code = "transport_error" } end,
@@ -159,23 +171,26 @@ local raising_ok, raising = Migration.durability(memory_target("raising"))
 assert(not raising_ok and raising.code == "unverifiable" and raising.detail == "version_probe_failed")
 
 -- An apply against unsynced writes is refused before the first insert.
-local unsynced_store, unsynced_writes = memory_target({ sync_mode = "periodic" })
+local unsynced_store, unsynced_writes = memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "periodic", durable_writes = false })
 local refused_ok, refused = run_against(unsynced_store, { apply = true })
 assert(not refused_ok and refused.code == "not_durable" and unsynced_writes() == 0)
 assert(refused.summary.durability == "not_durable" and refused.summary.durable == false)
 
--- A destination that cannot answer still runs, but its summary says so.
+-- A destination that cannot prove durability is refused before the first insert.
 local quiet_store, quiet_writes = memory_target(nil)
 local quiet_ok, quiet = run_against(quiet_store, { apply = true })
 assert(not quiet_ok and quiet.code == "durability_unverifiable" and quiet_writes() == 0)
 assert(quiet.summary.durability == "unverifiable" and quiet.summary.durable == false)
 
-local proven_store = memory_target({ sync_mode = "always" })
+local proven_store = memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "always", durable_writes = true })
 local proven_ok, proven = run_against(proven_store, { apply = true })
 assert(proven_ok and proven.durability == "durable" and proven.durable == true)
 
 -- Verify-only cutover gate ----------------------------------------------------
-local verified_store, verified_writes = memory_target({ sync_mode = "always" })
+local verified_store, verified_writes = memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "always", durable_writes = true })
 local filled_ok = run_against(verified_store, { apply = true })
 assert(filled_ok)
 
@@ -183,7 +198,8 @@ local gate_ok, gate = run_against(verified_store, { verify_only = true })
 assert(gate_ok and gate.mode == "verify" and gate.verified == 1 and verified_writes() == 1)
 assert(gate.guilds[1].status == "verified")
 
-local empty_store, empty_writes = memory_target({ sync_mode = "always" })
+local empty_store, empty_writes = memory_target({ api_version = "1.0.0", engine = "preppydb",
+  sync_mode = "always", durable_writes = true })
 local open_ok, open = run_against(empty_store, { verify_only = true })
 assert(not open_ok and open.code == "not_migrated" and empty_writes() == 0)
 assert(open.summary.failed.key == "123" and open.summary.mode == "verify")

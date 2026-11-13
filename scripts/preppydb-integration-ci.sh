@@ -84,6 +84,13 @@ curl --fail --silent --show-error -X POST "$BASE_URL/v1/collections" \
 
 export PREPPYDB_URL="$BASE_URL"
 export PREPPYDB_TOKEN="$TOKEN"
+MOLLY_PREPPYDB_TEST_RUN_ID="$(date +%s)$$"
+if [[ ! "$MOLLY_PREPPYDB_TEST_RUN_ID" =~ ^[0-9]{1,17}$ ]]; then
+  echo "could not create a valid synthetic PreppyDB test run ID" >&2
+  exit 1
+fi
+export MOLLY_PREPPYDB_TEST_RUN_ID
+GUILD_3="9${MOLLY_PREPPYDB_TEST_RUN_ID}03"
 MOLLY_PREPPYDB_TEST=integration "$LUVIT_BIN" tests/preppydb_luvit_entry.lua
 
 echo "Terminating the isolated PreppyDB server with SIGKILL after acknowledged writes."
@@ -101,6 +108,6 @@ SERVER_PID=
 "$PREPPYDB_CLI_BIN" backup-verify --archive "$BACKUP_FILE"
 "$PREPPYDB_CLI_BIN" restore --archive "$BACKUP_FILE" --target "$RESTORE_DIR"
 "$PREPPYDB_CLI_BIN" verify --data-dir "$RESTORE_DIR"
-"$PREPPYDB_CLI_BIN" get --collection molly_guild_state --key 91003 --data-dir "$RESTORE_DIR" >"$ARTIFACT_DIR/restored-guild.json"
-grep -E '"guild"[[:space:]]*:[[:space:]]*"91003"' "$ARTIFACT_DIR/restored-guild.json" >/dev/null
+"$PREPPYDB_CLI_BIN" get --collection molly_guild_state --key "$GUILD_3" --data-dir "$RESTORE_DIR" >"$ARTIFACT_DIR/restored-guild.json"
+grep -E "\"guild\"[[:space:]]*:[[:space:]]*\"${GUILD_3}\"" "$ARTIFACT_DIR/restored-guild.json" >/dev/null
 echo "PreppyDB isolated backup, verify and restore: pass"
