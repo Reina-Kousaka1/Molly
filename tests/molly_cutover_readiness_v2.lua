@@ -211,7 +211,7 @@ local function target_new(identity)
   end
   function target:transaction(operations)
     self.writes = self.writes + 1
-    if self.fail_at == self.writes then return nil, { code = "io_error", status = 507 } end
+    if self.fail_at == self.writes then return nil, { code = "conflict", status = 409 } end
     local pending = {}
     for _, operation in ipairs(operations) do
       local location = operation.collection .. "/" .. operation.key
