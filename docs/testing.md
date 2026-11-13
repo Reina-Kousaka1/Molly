@@ -55,26 +55,57 @@ SeaWorld performance result.
 ## Luvit and library-dependent tests
 
 `tests/run_luvit.sh` runs the Luvit JSON frame-boundary test, mocked Lavalink
-client tests, and mocked Discord registration tests. Run it with a Luvit
-runtime and required Lua modules on the runtime's normal search path:
+client tests, mocked Discord registration tests, and a direct-mention
+Ollama/Discord E2E test over a real Luvit HTTP socket to an ephemeral local
+mock server. Run it with a Luvit runtime and required Lua modules on the
+runtime's normal search path:
 
 ```sh
 LUVIT_BIN=./runtime/luvit tests/run_luvit.sh
 ```
 
-The frame-boundary test was run against upstream Luvit's JSON encoder: request
-and response frames at 1,048,575 and 1,048,576 bytes were accepted, and
-1,048,577-byte frames were rejected. Oversized requests were rejected before
-any socket write; UTF-8 byte counting was also checked. This measures Molly's
-synthetic frames using that encoder, not a live SeaWorld service. The Luvit
-runner passed the frame and four Lavalink mock tests, then stopped because the
-required `discord.lua` module was not available; Discord registration was not
-verified.
+The Luvit test suite uses `luvit/json@2.8`, `luvit/coro-net@3.3.1`,
+`luvit/http-codec@3.0.8`, and `filispeen/discord.lua@1.2.2`. Install them into
+a temporary dependency directory. Set `MOLLY_TEST_DEPS_DIR` to that directory
+for single-file modules; also set `MOLLY_TEST_DISCORD_MODULE` to the absolute
+`discord.lua/init.lua` path so Luvit's custom resolver retains the package's
+relative `require()` context. The versioned workflow verifies the JSON and HTTP
+module versions and sets both variables. The Python harness binds only to
+`127.0.0.1` on an OS-assigned port, returns deterministic Ollama chat responses,
+including header/body timeouts and a provider error, and verifies request
+count/order without printing prompts. The test does not start Ollama, connect to
+Discord, or contact an external service. Run the standalone E2E with:
+
+```sh
+LUVIT_BIN=./runtime/luvit \
+MOLLY_TEST_DEPS_DIR=/path/to/temporary/deps \
+python3 tests/personality_ollama_e2e.py
+```
+
+For the full Luvit suite, additionally set `MOLLY_TEST_DISCORD_MODULE` to the
+absolute package entrypoint before running `tests/run_luvit.sh`.
+
+The dedicated `.github/workflows/personality-ollama-e2e.yml` workflow builds
+the pinned Luvit version, installs the test-only HTTP/Discord modules in
+temporary storage, and runs the complete Luvit test runner for updates to the
+personality branch and PRs targeting `main` or `arena/b9d4658e-molly`.
+
+The pinned local Luvit run passed the SeaWorld JSON frame-boundary test, four
+Lavalink mock tests, Discord registration/permissions for 58 commands, and the
+loopback Ollama E2E (five HTTP requests verified, including a duplicate
+in-flight event, both timeout paths, HTTP 503, and recovery). The E2E exercised
+Luvit's actual HTTP socket transport. These are local synthetic tests; they do
+not validate SeaWorld server behavior or contact Discord/Ollama.
+
+The frame-boundary test accepts request and response frames at 1,048,575 and
+1,048,576 bytes and rejects 1,048,577 bytes. Oversized requests are rejected
+before any socket write; UTF-8 byte counting is also checked. This measures
+Molly's synthetic frames using that encoder, not a live SeaWorld service.
 
 `tests/lavalink_client.lua` mocks its HTTP and WebSocket transports; it needs
 Luvit's `json` module but no live Lavalink service. `tests/discord_registration.lua`
-needs Luvit and `discord.lua` on `package.path` (the expected repository-local
-path is `deps/`) and uses a mocked client without logging into Discord.
+loads the package entrypoint from `MOLLY_TEST_DISCORD_MODULE` when supplied and
+uses a mocked client without logging into Discord or calling the Discord API.
 
 ## SeaWorld integration tests
 

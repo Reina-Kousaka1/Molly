@@ -1,3 +1,10 @@
+local test_deps = os.getenv("MOLLY_TEST_DEPS_DIR")
+if type(test_deps) == "string" and test_deps ~= "" then
+  local separator = package.config:sub(1, 1)
+  test_deps = test_deps:gsub("[/\\]$", "")
+  package.path = test_deps .. separator .. "?.lua;" .. test_deps .. separator .. "?"
+    .. separator .. "init.lua;" .. package.path
+end
 package.path = "./?.lua;./?/init.lua;./deps/?.lua;./deps/?/init.lua;" .. package.path
 
 local json = require("json")
