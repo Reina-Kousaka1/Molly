@@ -207,11 +207,21 @@ local function assert_durability_rejected(version, expected_detail)
   assert(not ok and reason == expected_detail and current.status == "not_ready")
   assert(current.detail == expected_detail)
 end
-assert_durability_rejected({ api_version = "1.0.0", sync_mode = "periodic", durable_writes = false }, "not_durable")
-assert_durability_rejected({ api_version = "1.0.0", sync_mode = "always" }, "durability_unverifiable")
-assert_durability_rejected({ api_version = "1.0.0", durable_writes = true }, "durability_unverifiable")
-assert_durability_rejected({ api_version = "1.0.0", sync_mode = "always", durable_writes = false }, "durability_unverifiable")
-assert_durability_rejected({ api_version = "1.0.0", sync_mode = "periodic", durable_writes = true }, "durability_unverifiable")
+assert_durability_rejected({
+  api_version = "1.0.0", engine = "preppydb", sync_mode = "periodic", durable_writes = false,
+}, "not_durable")
+assert_durability_rejected({
+  api_version = "1.0.0", engine = "preppydb", sync_mode = "always",
+}, "durability_unverifiable")
+assert_durability_rejected({
+  api_version = "1.0.0", engine = "preppydb", durable_writes = true,
+}, "durability_unverifiable")
+assert_durability_rejected({
+  api_version = "1.0.0", engine = "preppydb", sync_mode = "always", durable_writes = false,
+}, "durability_unverifiable")
+assert_durability_rejected({
+  api_version = "1.0.0", engine = "preppydb", sync_mode = "periodic", durable_writes = true,
+}, "durability_unverifiable")
 status_connector.version = function() return { api_version = "1.0.0", version = "0.1.0", engine = "other-db",
   sync_mode = "always", durable_writes = true } end
 local identity_ok, identity_reason = service:connect()
