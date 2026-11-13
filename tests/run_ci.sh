@@ -16,6 +16,7 @@ for suite in \
   tests/preppydb_async_connector.lua \
   tests/preppydb_store.lua \
   tests/seaworld_preppydb_migration.lua \
+  tests/molly_db_migrator_cli.lua \
   tests/developer_lifecycle.lua \
   tests/v2.lua \
   tests/community.lua \
@@ -30,5 +31,7 @@ for suite in \
 do
   "$LUA_BIN" "$suite"
 done
+"$LUA_BIN" ops/molly-db-migrate.lua migrate --dry-run --synthetic
+"$LUA_BIN" ops/molly-db-migrate.lua migrate --synthetic
 "$LUA_BIN" tests/stress.lua
 "$PYTHON_BIN" tests/lavalink_env_transfer.py

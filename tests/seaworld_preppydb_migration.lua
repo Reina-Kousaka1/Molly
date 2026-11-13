@@ -68,6 +68,29 @@ invalid.guilds = { "123", "123" }
 local invalid_ok, invalid_reason = Migration.run(invalid)
 assert(not invalid_ok and invalid_reason.code == "invalid_manifest")
 
+local malformed_source = {}
+function malformed_source:query()
+  return true, { rows = { { id = "synthetic-malformed", document = { data = { guild = "999" } } } } }
+end
+local malformed_target_writes = 0
+local malformed_target = {
+  version = function() return { api_version = "1.0.0", engine = "preppydb",
+    sync_mode = "always", durable_writes = true } end,
+  get = function() return nil, { code = "not_found", status = 404 } end,
+  transaction = function()
+    malformed_target_writes = malformed_target_writes + 1
+    error("malformed source data must not reach target writes")
+  end,
+}
+local malformed_ok, malformed_reason = Migration.run({
+  source = malformed_source, target = malformed_target,
+  source_json = source_json, target_json = target_json,
+  guilds = { "123" }, globals = {}, apply = true,
+})
+assert(not malformed_ok and malformed_reason.code == "source_inconsistent")
+assert(malformed_reason.summary.failed.code == "source_inconsistent")
+assert(malformed_target_writes == 0, "malformed source data reached target writes")
+
 local conflicting_target = {
   version = function() return { api_version = "1.0.0", engine = "preppydb",
     sync_mode = "always", durable_writes = true } end,
