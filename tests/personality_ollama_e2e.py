@@ -185,6 +185,14 @@ def main() -> int:
         problems = list(state.problems)
 
     if result.returncode != 0:
+        with state.lock:
+            request_count = len(state.requests)
+            problem_codes = list(state.problems)
+        print(
+            f"mock diagnostic: chat_requests={request_count}; "
+            f"server_problem_codes={','.join(problem_codes) if problem_codes else 'none'}",
+            file=sys.stderr,
+        )
         return result.returncode
     if problems:
         print("mock server rejected one or more requests: " + ",".join(problems), file=sys.stderr)

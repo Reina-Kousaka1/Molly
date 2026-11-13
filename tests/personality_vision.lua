@@ -81,7 +81,8 @@ test("unsupported, oversized, mismatched, multiple and malformed attachments fai
   local good = png()
   local cases = {
     { attachment("face.gif", "image/gif", "GIF89a") , "unsupported_image_type" },
-    { attachment("face.jpg", "image/jpeg", good), "image_type_mismatch" },
+    -- Filename and declared MIME must agree before any network request.
+    { attachment("face.jpg", "image/png", good), "image_type_mismatch" },
     { attachment("face.png", "image/png", good, { size = #good + 1 }), "image_size_mismatch" },
     { attachment("face.png", "text/plain", good), "unsupported_image_type" },
     { attachment("face.png", "image/png", good, { url = "https://127.0.0.1/attachments/1/2/x.png" }), "invalid_image_url" },
@@ -95,7 +96,7 @@ test("unsupported, oversized, mismatched, multiple and malformed attachments fai
   assert(value == nil and err == "too_many_images")
   value, err = image_loader:prepare({ attachment("face.png", "image/png", good, { size = Images.DEFAULT_MAX_BYTES + 1 }) })
   assert(value == nil and err == "image_too_large")
-  assert(downloaded == 1, "invalid metadata must not trigger a download")
+  assert(downloaded == 0, "invalid metadata must not trigger a download")
 end)
 
 test("download size, returned MIME, and actual file signature must agree", function()

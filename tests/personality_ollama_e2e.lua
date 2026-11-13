@@ -123,7 +123,14 @@ local function shutdown(code)
 end
 
 watchdog:start(12000, 0, function()
-  io.stderr:write("not ok - E2E timed out; current phase " .. tostring(phase) .. "\n")
+  local details = {}
+  for _, warning in ipairs(warnings) do
+    local detail = type(warning.detail) == "string" and warning.detail or "unknown"
+    details[#details + 1] = detail
+  end
+  io.stderr:write("not ok - E2E timed out; current phase " .. tostring(phase)
+    .. "; replies=" .. tostring(#sent) .. "; bridge_parallel=" .. tostring(bridge.parallel)
+    .. "; warnings=" .. table.concat(details, ",") .. "\n")
   shutdown(1)
 end)
 
