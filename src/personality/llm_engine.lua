@@ -73,7 +73,22 @@ end
 
 -- Keep the reply safe to post: neutralize group pings with a zero-width space.
 local function defang_mentions(text)
-  return (text:gsub("@everyone", "@\226\128\139everyone"):gsub("@here", "@\226\128\139here"))
+  return (text:gsub("@everyone", "@\226\128\139everyone")
+    :gsub("@here", "@\226\128\139here")
+    -- Prevent model-generated user and role mentions from pinging Discord users.
+    :gsub("<@", "<\226\128\139@"))
+end
+
+local function utf8_prefix(text, max_bytes)
+  if #text <= max_bytes then return text end
+  local limit = max_bytes
+  -- If the next byte continues a multibyte code point, back up to its lead byte.
+  while limit > 0 do
+    local next_byte = text:byte(limit + 1)
+    if not next_byte or next_byte < 128 or next_byte > 191 then break end
+    limit = limit - 1
+  end
+  return text:sub(1, limit)
 end
 
 local function message_chars(messages)
@@ -231,6 +246,13 @@ function Engine:generate(request)
     return nil, error_value("content_too_large", { limit = self.max_content_chars })
   end
 
+  local images = request.images
+  if images ~= nil then
+    if type(images) ~= "table" or #images ~= 1 or type(images[1]) ~= "string"
+      or #images[1] < 4 or #images[1] > 4 * math.ceil(4 * 1024 * 1024 / 3) then
+      return nil, error_value("invalid_request")
+    end
+  end
   local history = normalize_history(request.history, self)
   if not history then return nil, error_value("invalid_request") end
 
@@ -238,6 +260,7 @@ function Engine:generate(request)
 
   local messages, memory_used, prompt_chars = self:_assemble(content, history, memory_entries)
   if not messages then return nil, error_value("content_too_large") end
+  if images then messages[#messages].images = images end
 
   local called, result, provider_err = pcall(self.provider.generate, self.provider, messages, {})
   if not called then
@@ -255,7 +278,7 @@ function Engine:generate(request)
   if reply == "" then return nil, error_value("empty_reply") end
   local truncated = false
   if #reply > self.max_reply_chars then
-    reply = reply:sub(1, self.max_reply_chars - 3):gsub("%s+$", "") .. "..."
+    reply = utf8_prefix(reply, self.max_reply_chars - 3):gsub("%s+$", "") .. "..."
     truncated = true
   end
 

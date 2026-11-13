@@ -77,6 +77,16 @@ test("default prefix and default currency preserve the existing coins display", 
   assert(msg.replies[1]:find("100 coins", 1, true))
 end)
 
+test("prefix probe uses guild-scoped configured prefixes", function()
+  local env = environment()
+  env.settings.get = function(_, guild)
+    return true, { prefix = guild == "10" and "." or "m!" }
+  end
+  assert(env.prefix:has_prefix(message("2000", "10", "20", ".daily")) == true)
+  assert(env.prefix:has_prefix(message("2001", "11", "20", "m!daily")) == true)
+  assert(env.prefix:has_prefix(message("2002", "11", "20", ".daily")) == false)
+end)
+
 test("general router exposes suitable existing information commands through shared handlers", function()
   local env = environment()
   for _, name in ipairs({ "about", "uptime", "botinfo", "channelinfo", "help" }) do

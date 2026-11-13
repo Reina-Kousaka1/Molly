@@ -61,6 +61,16 @@ function Prefix:_prefix_for(guild)
   return prefix
 end
 
+-- Cheap, guild-scoped probe for other message handlers that must not consume
+-- an actual prefix command (for example, the optional personality responder).
+function Prefix:has_prefix(message)
+  if type(message) ~= "table" or not Store.valid_id(message.guild_id)
+    or type(message.content) ~= "string" then return nil, "invalid_message" end
+  local prefix = self:_prefix_for(message.guild_id)
+  if not prefix then return nil, "settings_unavailable" end
+  return message.content:sub(1, #prefix) == prefix
+end
+
 function Prefix:dispatch(message)
   if type(message) ~= "table" or type(message.author) ~= "table" or message.author.bot or message.webhook_id then
     return false, "ignored_message"

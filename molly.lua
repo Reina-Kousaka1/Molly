@@ -47,6 +47,9 @@ local MusicPanel = require("src.music.panel")
 local DynamicVoice = require("src.voice.dynamic_channels")
 local Presence = require("src.presence.rotation")
 local Personality = require("src.personality.engine")
+local PersonalityDiscordBridge = require("src.personality.discord_bridge")
+local PersonalityModelRouter = require("src.personality.model_router")
+local DiscordImages = require("src.personality.discord_images")
 local PrefixCommands = require("src.commands.prefix")
 local GuildSettings = require("src.settings.guild")
 local SettingsCommands = require("src.commands.settings")
@@ -111,33 +114,78 @@ if #config.music.configuration_errors == 0 and config.music.lavalink_url then mu
 local music = MusicAdapter.new(music_options)
 -- Personality Engine V1 (integration phase): opt-in behind
 -- MOLLY_PERSONALITY_ENGINE_ENABLED, disabled by default. Even when enabled it is
--- constructed for readiness diagnostics only and is NOT bound to any Discord
--- event, never auto-replies and never persists conversation data. A
--- misconfiguration keeps the engine off and logs an error; it never stops Molly.
+-- connected only through the bounded direct-mention bridge below. It does not
+-- execute commands, call economy/moderation services, or persist conversation
+-- data. A misconfiguration keeps this integration off and never stops Molly.
 if #config.personality.engine.configuration_errors > 0 then
   logger:error("personality_engine_config_invalid", { variables = table.concat(config.personality.engine.configuration_errors, ",") })
 end
+local ollama_engine, ollama_bridge
+local prefix_commands
 if config.personality.engine.enabled then
   local Ollama = require("src.personality.ollama")
   local EngineV1 = require("src.personality.llm_engine")
   local transport_loaded, OllamaTransport = pcall(require, "src.personality.luvit_transport")
-  local adapter, adapter_error = Ollama.new({
+  local text_adapter, adapter_error = Ollama.new({
     url = config.personality.engine.ollama.url,
-    model = config.personality.engine.ollama.model,
+    model = config.personality.engine.ollama.text_model,
     timeout_ms = config.personality.engine.ollama.timeout_ms,
     max_response_bytes = config.personality.engine.ollama.max_response_bytes,
     transport = transport_loaded and OllamaTransport.request or nil,
   })
-  if adapter then
-    local engine = EngineV1.new({ enabled = true, provider = adapter, provider_name = "ollama", logger = logger })
-    local status = engine:status()
-    logger:info("personality_engine_prepared", {
-      enabled = status.enabled, ready = status.ready, provider = status.provider,
-      model = config.personality.engine.ollama.model,
-      bound_to_discord = status.bound_to_discord, memory = status.memory,
+  local vision_adapter, vision_error = Ollama.new({
+    url = config.personality.engine.ollama.url,
+    model = config.personality.engine.ollama.vision_model,
+    timeout_ms = config.personality.engine.ollama.timeout_ms,
+    max_response_bytes = config.personality.engine.ollama.max_response_bytes,
+    transport = transport_loaded and OllamaTransport.request or nil,
+  })
+  local router, router_error
+  if text_adapter and vision_adapter then
+    router, router_error = PersonalityModelRouter.new({
+      text_provider = text_adapter,
+      vision_provider = vision_adapter,
+      thinking_enabled = config.personality.engine.ollama.thinking_enabled,
+      logger = logger,
+    })
+  end
+  local image_transport_loaded, ImageTransport = pcall(require, "src.personality.discord_image_transport")
+  local image_loader
+  if image_transport_loaded then
+    image_loader = DiscordImages.new({
+      max_bytes = config.personality.engine.ollama.max_image_bytes,
+      timeout_ms = config.personality.engine.ollama.image_timeout_ms,
+      download = ImageTransport.download,
     })
   else
-    logger:error("personality_engine_unavailable", { detail = tostring(adapter_error) })
+    logger:warn("personality_image_transport_unavailable", { detail = "https_client_unavailable" })
+  end
+  if router then
+    ollama_engine = EngineV1.new({ enabled = true, provider = router, provider_name = "ollama_dual", logger = logger })
+    local status = ollama_engine:status()
+    logger:info("personality_engine_prepared", {
+      enabled = status.enabled, ready = status.ready, provider = status.provider,
+      text_model = config.personality.engine.ollama.text_model,
+      vision_model = config.personality.engine.ollama.vision_model,
+      thinking_enabled = config.personality.engine.ollama.thinking_enabled,
+      image_transport_ready = image_loader ~= nil,
+      direct_mention_bridge_ready = status.ready, memory = status.memory,
+    })
+    ollama_bridge = PersonalityDiscordBridge.new({ enabled = status.ready, engine = ollama_engine,
+      logger = logger, cooldown_seconds = 30, max_parallel = 1, image_loader = image_loader,
+      is_prefix_command = function(message)
+        if not prefix_commands then return nil end
+        return prefix_commands:has_prefix(message)
+      end,
+      send = function(channel, message)
+        local rest = bootstrap and bootstrap.bot and bootstrap.bot.client and bootstrap.bot.client.rest
+        if not rest or type(rest.send_message) ~= "function" then return false end
+        return rest:send_message(channel, { content = message })
+      end })
+  else
+    logger:error("personality_engine_unavailable", {
+      detail = tostring(router_error or adapter_error or vision_error or "initialization_failed"),
+    })
   end
 end
 local app = App.new({ logger = logger, seaworld = persistence, persistence = persistence,
@@ -219,6 +267,11 @@ local function bind_client_events(client)
   client:on("guild_create", function(guild) dynamic_voice:on_guild_create(guild); music_panel:recover(guild.id) end)
   if bootstrap.bot and type(bootstrap.bot.on_message) == "function" then
     bootstrap.bot:on_message(function(message)
+      if ollama_bridge and ollama_bridge:matches(message) then
+        local handled, reason = pcall(ollama_bridge.on_message, ollama_bridge, message)
+        if not handled then logger:warn("personality_ollama_event_failed", { detail = "handler_error" }) end
+        return
+      end
       local ok, reason = pcall(personality.observe, personality, message)
       if not ok then logger:warn("personality_observe_failed", { detail = "handler_error" }) end
     end)
@@ -228,7 +281,7 @@ local function bind_client_events(client)
 end
 local presence = Presence.new({ logger = logger, schedule = function(interval, fn) return timer.setInterval(interval, fn) end, cancel = timer.clearInterval,
   write = function(text) personality:set_status(text); return bootstrap.bot:change_presence({ status = "online", activity = { to_dict = function() return { type = 0, name = text } end } }) end })
-local prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
+prefix_commands = PrefixCommands.new(commands, guild_settings, { logger = logger, prefix = "." })
 SettingsCommands.register(commands, guild_settings, { on_prefix_changed = function(guild, prefix) prefix_commands:set_prefix(guild, prefix) end })
 PermissionCommands.register(commands, permission_engine)
 AFKCommands.register(commands, afk)
@@ -249,6 +302,7 @@ bootstrap.bot:on("ready", function()
   local client, user = bootstrap.bot.client, bootstrap.bot.user
   if not client or not user or not user.id then return end
   personality.bot_id = user.id
+  if ollama_bridge then ollama_bridge:set_bot_id(user.id) end
   music_manager:set_discord_client(client, user.id); dynamic_voice:set_runtime(client.rest, client, user.id); music_panel:set_bot(client, music_manager); music_panel:register_interactions(bootstrap.bot, music_manager)
   local started, reason = music_manager:start(user.id); if not started then logger:warn("music_gateway_unavailable", { detail = reason or "not_configured" }) end
   local pending_ok, marker = lifecycle:pending()

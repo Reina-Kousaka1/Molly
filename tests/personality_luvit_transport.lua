@@ -52,7 +52,11 @@ local function fake_connect(_options)
     requests[#requests + 1] = data
     return true
   end
-  return read, write, socket
+  local function close()
+    scenario.close_called = true
+    if not socket.closed then socket:close() end
+  end
+  return read, write, socket, nil, nil, close
 end
 
 package.loaded["coro-net"] = { connect = fake_connect }
@@ -115,11 +119,12 @@ result, err = Transport.request("GET", "http://127.0.0.1:11434/", {
 check("oversized header block is rejected", result == nil and err == "response_too_large")
 
 -- E. timeout: the fake server dies and the timer fires
-scenario = { script = {}, connect_ok = true, fire_timer_on_first_read = true }
+scenario = { script = {}, connect_ok = true, fire_timer_on_first_read = true, close_called = false }
 result, err = Transport.request("POST", "http://127.0.0.1:11434/api/chat", {
   timeout_ms = 5, max_response_bytes = 1024, body = "{}",
 })
 check("a timed-out request reports timeout", result == nil and err == "timeout")
+check("timeout invokes the coro-net closer to wake a blocked reader", scenario.close_called == true)
 
 -- F. connection refused
 scenario = { script = {}, connect_ok = false }

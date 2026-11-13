@@ -64,18 +64,23 @@ function Transport.request(method, url, options)
   local timeout_ms = tonumber(options.timeout_ms) or 15000
   local max_response_bytes = tonumber(options.max_response_bytes) or (256 * 1024)
 
-  local timed_out, socket = false, nil
+  local timed_out, socket, close_socket = false, nil, nil
   local timer = uv.new_timer()
   timer:start(timeout_ms, 0, function()
     timed_out = true
-    if socket and type(socket.close) == "function" and not socket:is_closing() then
-      socket:close()
+    if close_socket then
+      -- coro-net's returned closer also wakes a coroutine blocked in read().
+      -- Calling the raw uv socket close alone can leave that reader suspended
+      -- forever, leaking a Discord bridge concurrency slot after timeout.
+      pcall(close_socket)
+    elseif socket and type(socket.close) == "function" and not socket:is_closing() then
+      pcall(socket.close, socket)
     end
   end)
 
   local ok, code, body = pcall(function()
     local host, port, host_header, path = parse_url(url)
-    local read, write, raw_socket = net.connect({
+    local read, write, raw_socket, _update_decoder, _update_encoder, coro_close = net.connect({
       host = host,
       port = port,
       timeout = timeout_ms,
@@ -84,6 +89,14 @@ function Transport.request(method, url, options)
     })
     socket = raw_socket
     if not read or not write then error("connection_failed", 0) end
+    if type(coro_close) == "function" then
+      close_socket = coro_close
+    elseif socket and type(socket.close) == "function" then
+      close_socket = function()
+        if not socket:is_closing() then socket:close() end
+      end
+    end
+    if timed_out then error("timeout", 0) end
 
     local outgoing = { method = method, path = path }
     local has_host, has_length = false, false

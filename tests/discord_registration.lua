@@ -1,5 +1,18 @@
+local test_deps = os.getenv("MOLLY_TEST_DEPS_DIR")
+if type(test_deps) == "string" and test_deps ~= "" then
+  local separator = package.config:sub(1, 1)
+  test_deps = test_deps:gsub("[/\\]$", "")
+  package.path = test_deps .. separator .. "?.lua;" .. test_deps .. separator .. "?"
+    .. separator .. "init.lua;" .. package.path
+end
 package.path = "./?.lua;./?/init.lua;./deps/?.lua;./deps/?/init.lua;" .. package.path
-local discord = require("discord.lua")
+local discord_module = os.getenv("MOLLY_TEST_DISCORD_MODULE")
+local discord
+if type(discord_module) == "string" and discord_module ~= "" then
+  discord = require(discord_module)
+else
+  discord = require("discord.lua")
+end
 local Router = require("src.commands.router")
 local Bootstrap = require("src.discord.bootstrap")
 local router = Router.new()

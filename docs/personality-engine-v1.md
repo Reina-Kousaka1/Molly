@@ -1,10 +1,7 @@
 # Personality Engine V1 — integration architecture
 
-Status: **integration phase, disabled by default, inert in production.**
-This document describes what exists in the repository, what does not, and what a
-later, explicitly approved change must do to activate the engine. It is the
-contract for reviewers of the current change and for anyone planning the
-activation step.
+Status: **direct-mention Discord integration, disabled by default.** It is not
+activated in production and does not establish Raspberry Pi readiness.
 
 Molly is Molly — KiddyyMolly, the pink, Sephora-loving Discord assistant. The
 engine does not introduce, alias or roleplay any other character.
@@ -23,14 +20,16 @@ In scope:
   not constructed by `molly.lua`, not called from any Discord event, and no
   PreppyDB collection is created by application code.
 - A **feature flag** (`MOLLY_PERSONALITY_ENGINE_ENABLED`), default `false`.
+- An opt-in Discord bridge that accepts direct Molly mentions only, filters
+  bots/webhooks/commands, and limits cooldown and concurrency.
 - Unit tests with a **simulated Ollama server** (transport-level double) and a
   synthetic in-memory PreppyDB connector. No live Ollama, Discord, PreppyDB or
   SeaWorld service is used.
 
 Explicitly out of scope (do not read this change as implementing them):
 
-- Automatic replies in any production Discord channel; the engine is not bound
-  to any Discord event.
+- Replies to non-mention messages, command execution, or economy, moderation,
+  and database actions based on model output.
 - Durable conversation storage anywhere; the engine never calls
   `memory:append`.
 - Image generation or outfit editing.
@@ -46,11 +45,10 @@ Explicitly out of scope (do not read this change as implementing them):
                  ┌────────────────────────────────────────────────────┐
                  │ Discord (gateway, commands, events)                │
                  │  src/discord/*, src/events/router.lua, molly.lua   │
-                 │  existing deterministic engine: src/personality/*   │
-                 │  (UNCHANGED — still the only engine in the loop)   │
+                 │  direct mention → bounded Ollama bridge (flagged)   │
+                 │  other eligible messages → deterministic engine     │
                  └───────────────┬────────────────────────────────────┘
-                                 │ nothing today; a future DEV-guild-only
-                                 │ bridge would live here (see activation)
+                                 │ only when feature flag is enabled
                                  ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │ Personality Engine V1  src/personality/llm_engine.lua                 │
@@ -58,7 +56,7 @@ Explicitly out of scope (do not read this change as implementing them):
 │  · request validation, history filtering (user/assistant only)        │
 │  · prompt budget: drop oldest history first, then memory, then reject │
 │  · best-effort memory recall (never fatal, never writes)              │
-│  · reply sanitization, @everyone/@here defang, reply length bound     │
+│  · reply sanitization, mention defanging, UTF-8-safe reply bound       │
 └───────┬───────────────────────────────┬───────────────────────────────┘
         ▼ provider contract             ▼ memory contract (read-only for engine)
 ┌───────────────────────────┐  ┌────────────────────────────────────────┐
@@ -85,21 +83,29 @@ SeaWorld or store references (enforced by a unit test that scans module
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `MOLLY_PERSONALITY_ENGINE_ENABLED` | `false` | Feature flag. Only `true`/`false` accepted. |
-| `MOLLY_OLLAMA_URL` | `http://127.0.0.1:11434` | http(s) **origin** only: no userinfo, path, query or fragment. Keep it on loopback or a trusted private network. |
-| `MOLLY_OLLAMA_MODEL` | unset | Required when the engine is enabled (e.g. `qwen2.5:7b`). Printable characters only, ≤ 100 chars, no whitespace. |
+| `MOLLY_OLLAMA_URL` | `http://127.0.0.1:11434` | `http://` **origin** only (the built-in Luvit transport does not support TLS): no userinfo, path, query or fragment. Keep it on loopback or a trusted private network. |
+| MOLLY_OLLAMA_TEXT_MODEL | qwen2.5:3b | Default text model; printable characters only, ≤ 100 chars, no whitespace. |
+| MOLLY_OLLAMA_VISION_MODEL | qwen3.5:2b | Model for validated images and explicit deep: text requests. |
+| MOLLY_OLLAMA_MODEL | unset | Legacy text override; used only when MOLLY_OLLAMA_TEXT_MODEL is unset. |
+| MOLLY_OLLAMA_THINKING_ENABLED | false | think: is honored only when enabled and /api/show confirms model support. |
 | `MOLLY_OLLAMA_TIMEOUT_MS` | `15000` | 100–120000 ms. Aborts the request; no retries. |
 | `MOLLY_OLLAMA_MAX_RESPONSE_BYTES` | `262144` | 1024–4194304 (4 MiB). Applied before JSON parsing and again at the transport. |
+| MOLLY_OLLAMA_MAX_IMAGE_BYTES | 4194304 | 1024–4194304 bytes; one JPEG, PNG or WebP attachment. |
+| MOLLY_OLLAMA_IMAGE_TIMEOUT_MS | 8000 | 100–30000 ms; HTTPS download from the Discord CDN only. |
 
 Personality-engine configuration errors **never** stop Molly from booting —
 following the same pattern as music configuration. When anything is invalid,
 the engine stays off, the error is logged as
 `personality_engine_config_invalid` (variable names only, never values), and
 the bot starts exactly as before. When valid, `molly.lua` logs
-`personality_engine_prepared` with `bound_to_discord = false`.
-
-When enabled, `molly.lua` constructs the engine once at startup purely for
-readiness diagnostics. It is not registered on any event, command, gateway
-hook or timer, and no code path calls `engine:generate` at runtime.
+`personality_engine_prepared`. With the feature enabled, direct mentions use
+the Ollama bridge; other eligible messages retain the deterministic responder. Ordinary text uses the text model; images and explicit deep: text use the vision model. See docs/personality-discord-integration-v1.md for routing and image validation.
+Messages beginning with the guild's configured prefix are left to the shared
+command router, even if they mention Molly as an argument. If prefix settings
+cannot be read, the bridge fails closed for that message. The bridge limits
+requests to a 30-second per-guild/user cooldown and one concurrent generation.
+Provider error codes are logged without request text or raw errors. The
+configured transport timeout and response bound apply, with no retries.
 
 ## Limits enforced in code
 
@@ -113,6 +119,7 @@ hook or timer, and no code path calls `engine:generate` at runtime.
 | Reply | 600 bytes, `...` suffix when truncated | engine |
 | Ollama messages / message / total | 16 / 4200 B / 16000 B | adapter |
 | Ollama response | `max_response_bytes` (default 256 KiB) | transport + adapter |
+| Image count / bytes | 1 / configured (default 4 MiB) | Discord image loader |
 | Stored memory entries | 20 per scope, 300 bytes each, 1800 B per recall | memory provider |
 
 ## Error model
@@ -157,29 +164,30 @@ To enable memory later (a separate, approved change):
 4. Decide explicitly whether the engine may call `memory:append` at all — V1
    ships with **no automatic persistence**.
 
-## Activation plan (later, explicitly approved PRs)
+## Controlled manual test plan
 
-1. **Local qualification**: run a disposable Ollama (`ollama serve`, small
-   instruct model) on a loopback/LAN host; measure latency and memory on the
-   target ARM64 hardware. Expect first-token latency to dominate; cap
-   `num_predict` and context.
-2. **Dev-guild bridge**: a separate, reviewable change adding a message-create
-   bridge behind a second flag (e.g. `MOLLY_PERSONALITY_DEV_GUILDS`), bound
-   only in a test guild, with reply rate limits and no economy/moderation
-   authority. Never in production channels directly.
-3. **Evaluation**: prompt-injection probes (channel spam, `@everyone` bait,
+1. Follow `docs/personality-discord-integration-v1.md` for private Windows-to-Pi
+   connectivity. Restrict Windows Firewall TCP 11434 to the Pi's fixed LAN IP;
+   do not forward the port from a router or expose it publicly.
+2. Enable the flag only in a controlled local configuration and private test
+   guild. Test mentions, bot/webhook rejection, cooldown, Ollama offline, and
+   ordinary command/economy behavior.
+3. Measure latency and memory on Raspberry Pi ARM64 before considering broader
+   use; this change does not activate production.
+4. **Evaluation**: prompt-injection probes (channel spam, `@everyone` bait,
    instruction override via history), reply quality spot checks per language,
    cost/latency dashboards via existing structured logging.
-4. **Memory opt-in**: only after step 1–3, per "Memory provider" above.
-5. **Production flag**: last step, separate approval, rollback = flag off.
+5. Memory persistence or production activation requires separate review and
+   explicit approval.
 
 Rollback for every step: set `MOLLY_PERSONALITY_ENGINE_ENABLED=false`. No data
 migrations exist to roll back.
 
 ## Known limitations and open risks
 
-- **Unverified hardware fit.** No latency, memory or stability measurements on
-  Raspberry Pi ARM64 yet; an LLM may not fit alongside Molly's current workload.
+- **Unverified hardware fit.** The two model weight sizes together exceed 4 GB
+  before runtime overhead. Serial execution and unload requests reduce overlap,
+  but laptop VRAM and Raspberry Pi ARM64 latency/memory still require measurement.
 - **Prompt injection.** Channel content is untrusted input; the persona and
   history filtering reduce but cannot eliminate this. Output needs review
   before any production binding.
@@ -193,9 +201,8 @@ migrations exist to roll back.
   deployment notes.
 - **Quality/safety review pending.** The persona is a starting point, not a
   moderated deployment.
-- **Reply surface.** When a future bridge lands, @mention defanging and length
-  bounds apply, but responsibility for where replies are posted must be
-  re-reviewed.
+- **No guild allowlist.** Limit initial testing to a controlled bot installation
+  and private test guild.
 
 ## Verification status
 
@@ -206,6 +213,8 @@ migrations exist to roll back.
   documents, and module-boundary scans.
 - The simulated Ollama server double is transport-level; it is not a real
   Ollama and its timings are not meaningful.
+- Discord bridge tests use mock messages and a mock engine; live gateway and
+  REST behavior remain unverified.
 - Not run: live Ollama, live Discord, live PreppyDB, Raspberry Pi, any
   container or production system. Nothing in this change establishes readiness
   for automatic replies.

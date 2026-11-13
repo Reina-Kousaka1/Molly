@@ -1,0 +1,84 @@
+name: Ollama Personality loopback E2E
+
+on:
+  push:
+    branches: [integration/ollama-personality-v1]
+  pull_request:
+    branches: [main, arena/b9d4658e-molly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personality-ollama-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  loopback-e2e:
+    name: Pinned Luvit + local mock Ollama
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Molly
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Luvit build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake libssl-dev perl pkg-config curl git python3
+
+      - name: Build the pinned Luvit runtime
+        run: |
+          set -euo pipefail
+          RUNTIME="$RUNNER_TEMP/molly-luvit-runtime"
+          mkdir -p "$RUNTIME"
+          LUVI_BIN="$RUNTIME/luvi"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 90 \
+            https://github.com/luvit/luvi/releases/download/v2.14.0/luvi-regular-Linux_x86_64 \
+            -o "$LUVI_BIN"
+          printf '%s  %s\n' \
+            f79614b208f7999030a13fca22ffeb91c3d880487be2b5b7e2425ab42ec7a1d0 "$LUVI_BIN" \
+            | sha256sum --check
+          chmod 0755 "$LUVI_BIN"
+
+          git clone --no-checkout https://github.com/luvit/lit.git "$RUNTIME/lit-src"
+          git -C "$RUNTIME/lit-src" checkout --detach 84fc5d729f1088b3b93bc9a55d1f7a245bca861d
+          git -C "$RUNTIME/lit-src" submodule update --init --recursive
+          test "$(git -C "$RUNTIME/lit-src" rev-parse HEAD)" = 84fc5d729f1088b3b93bc9a55d1f7a245bca861d
+          (cd "$RUNTIME/lit-src" && "$LUVI_BIN" . -- make . "$RUNTIME/lit" "$LUVI_BIN")
+
+          git clone --no-checkout https://github.com/luvit/luvit.git "$RUNTIME/luvit-src"
+          git -C "$RUNTIME/luvit-src" checkout --detach 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
+          git -C "$RUNTIME/luvit-src" submodule update --init --recursive
+          test "$(git -C "$RUNTIME/luvit-src" rev-parse HEAD)" = 8e5a6aca15b1e5bec2398a4dadc622aea4ead7ec
+          (cd "$RUNTIME/luvit-src" && "$RUNTIME/lit" make . "$RUNTIME/luvit" "$LUVI_BIN")
+          "$RUNTIME/luvit" --version
+          echo "LUVIT_BIN=$RUNTIME/luvit" >> "$GITHUB_ENV"
+          echo "LIT_BIN=$RUNTIME/lit" >> "$GITHUB_ENV"
+
+      - name: Install pinned Luvit HTTP, TLS, and Discord test modules in temporary storage
+        run: |
+          set -euo pipefail
+          DEPS_ROOT="$RUNNER_TEMP/molly-personality-deps"
+          mkdir -p "$DEPS_ROOT"
+          cd "$DEPS_ROOT"
+          "$LIT_BIN" install luvit/json@2.8 luvit/coro-net@3.3.1 luvit/http-codec@3.0.8 luvit/secure-socket@1.0.0 filispeen/discord.lua@1.2.2
+          grep -F 'version = "2.8"' deps/json.lua
+          grep -F 'version = "3.3.1"' deps/coro-net.lua
+          grep -F 'version = "3.0.8"' deps/http-codec.lua
+          test -f deps/secure-socket/init.lua
+          # Luvit's custom resolver needs the absolute package entrypoint to
+          # preserve the package's relative require() context.
+          echo "MOLLY_TEST_DISCORD_MODULE=$DEPS_ROOT/deps/discord.lua/init.lua" >> "$GITHUB_ENV"
+          echo "MOLLY_TEST_DEPS_DIR=$DEPS_ROOT/deps" >> "$GITHUB_ENV"
+
+      - name: Run complete Luvit suite including direct-mention E2E
+        env:
+          DISCORD_LUA_AUTO_INSTALL: "0"
+        run: |
+          set -euo pipefail
+          tests/run_luvit.sh

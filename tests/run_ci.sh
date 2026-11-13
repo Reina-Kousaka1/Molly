@@ -23,6 +23,9 @@ for suite in \
   tests/observability.lua \
   tests/personality_luvit_transport.lua \
   tests/personality_engine.lua \
+  tests/personality_model_router.lua \
+  tests/personality_vision.lua \
+  tests/personality_discord_bridge.lua \
   tests/music_voice.lua \
   tests/moderation_v2.lua \
   tests/sprint.lua \
