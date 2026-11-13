@@ -165,25 +165,29 @@ so the complete global manifest must be verified before cutover. Consequences:
 
 ### Operator command
 
-`ops/preppydb-migrate.lua` is the entry point for the primitive:
+`ops/preppydb-migrate.lua` is the legacy manifest entry point for the primitive.
+It now fails closed before connecting because the current Economy policy and
+live-source qualifications do not permit a production import. Use the
+operator-facing gate and synthetic-only qualification path:
 
 ```sh
-luvit ops/preppydb-migrate.lua --manifest=manifest.json            # dry run
-luvit ops/preppydb-migrate.lua --manifest=manifest.json --apply    # insert-only
-luvit ops/preppydb-migrate.lua --manifest=manifest.json --verify   # cutover gate
+luvit ops/molly-db-migrate.lua preflight
+luvit ops/molly-db-migrate.lua migrate --dry-run --synthetic
+luvit ops/molly-db-migrate.lua migrate --synthetic
+luvit ops/molly-db-migrate.lua verify --synthetic
 ```
 
-Connection settings come from `--url`/`--token`/`--seaworld-socket` or from
-`MOLLY_PREPPYDB_URL`, `MOLLY_PREPPYDB_TOKEN` and `MOLLY_SEAWORLD_SOCKET`. Exit
-codes are `0` success, `1` migration or verification failure (including
-`not_durable`, `durability_unverifiable` and `not_migrated`) and `2` an unusable
-invocation or manifest. An apply requires affirmative durable-write evidence;
-there is no override for missing or contradictory durability information.
+These commands are not live migration controls. `backup`, live `migrate`, live
+`verify`, and `cutover` report the outstanding blockers without opening
+connections. Synthetic migration uses in-memory adapters and the existing
+insert-only migration primitive. Its durable-write response is a synthetic
+test fixture only and is not evidence about a running server.
 
-The command requires the deployed Luvit runtime, a live SeaWorld socket and a
-reachable PreppyDB. It is not started by Molly and is not run by CI; its
-argument handling, manifest loading, durability refusal, insert path and
-verify gate have been exercised against synthetic in-memory connectors only.
+The underlying `src.persistence.seaworld_preppydb_migration` primitive remains
+covered by in-memory and disposable-server tests for manifest validation,
+durability refusal, insert-only application, verify-only behavior, interruption,
+resume, and idempotency. Those tests do not authorize running the legacy live
+operator entry point.
 
 There is not yet a qualified end-to-end migration run against real SeaWorld and
 PreppyDB data, a restore rehearsal, a cutover runbook, or a reverse migration.

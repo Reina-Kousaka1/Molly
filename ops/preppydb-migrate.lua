@@ -1,30 +1,33 @@
--- Operator entry point for the explicit-manifest SeaWorld -> PreppyDB migration.
+-- Legacy explicit-manifest migration entry point. All live invocations are
+-- currently blocked by Molly's migration policy before any database access.
 --
--- This is deliberately NOT part of Molly's startup and is not exercised by CI:
--- it needs the deployed Luvit runtime (`uv`, `coro-net`, `json`) and a real
--- SeaWorld socket plus a reachable PreppyDB. It never discovers data on its
--- own; the manifest is the complete list of guild and global stores that the
--- operator has established must be migrated.
+-- This is deliberately NOT part of Molly's startup. Its historical explicit-
+-- manifest implementation remains below for primitive compatibility, but the
+-- live CLI is fail-closed until policy, source snapshot and rollback gates pass.
+-- The supported operator-facing path is ops/molly-db-migrate.lua.
 --
 --   luvit ops/preppydb-migrate.lua --manifest=manifest.json            # dry run
 --   luvit ops/preppydb-migrate.lua --manifest=manifest.json --apply    # insert
 --   luvit ops/preppydb-migrate.lua --manifest=manifest.json --verify   # cutover gate
 --
--- Exit codes: 0 = the requested mode succeeded, 1 = the migration or the
--- verification failed, 2 = the invocation or the manifest is unusable.
+-- Exit codes: 0 = help only, 1 = live mode blocked or migration failed,
+-- 2 = invocation or manifest unusable.
 --
 -- Manifest (JSON):
 --   { "guilds": ["1234"], "globals": ["lifecycle"],
 --     "guild_collection": "molly_guild_state", "global_collection": "molly_global_state" }
 --
--- Connection settings come from the flags below or, when omitted, from the
--- same environment variables Molly's service uses (MOLLY_SEAWORLD_SOCKET,
--- MOLLY_PREPPYDB_URL, MOLLY_PREPPYDB_TOKEN, MOLLY_PREPPYDB_TIMEOUT_MS).
+-- Historical connection flags are parsed for an explicit refusal; credentials
+-- are not read by this entry point while the policy gate is closed.
 
 local EXIT_OK, EXIT_FAILED, EXIT_UNUSABLE = 0, 1, 2
 
 local USAGE = [[
 usage: luvit ops/preppydb-migrate.lua --manifest=<path> [--apply | --verify] [options]
+
+LIVE MIGRATION IS CURRENTLY BLOCKED BY POLICY AND QUALIFICATION GATES.
+All modes refuse before connecting. Use ops/molly-db-migrate.lua for status
+and synthetic-only tests; no command-line option overrides the live block.
 
 modes (exactly one, default is the read-only dry run):
   --dry-run            report what would be inserted; writes nothing
@@ -240,6 +243,17 @@ local function main(argv)
   if #errors > 0 then fail_usage(errors[1]) end
   if not parsed.manifest then fail_usage("--manifest=<path> is required") end
   local mode = request_mode(parsed)
+
+  -- This legacy operator path can reach virtual-currency guild aggregates.
+  -- Keep it closed until policy, source-snapshot, backup and rollback gates are
+  -- qualified; refuse before reading credentials or opening either database.
+  local MigrationPolicy = require("src.persistence.molly_migration_policy")
+  local live_allowed, live_blockers = MigrationPolicy.live_migration_allowed()
+  if not live_allowed then
+    io.stderr:write("preppydb-migrate: live migration is blocked; no database was contacted\n")
+    for _, blocker in ipairs(live_blockers) do io.stderr:write("  " .. blocker .. "\n") end
+    return EXIT_FAILED
+  end
 
   -- The migration primitive yields while a PreppyDB request is in flight, so it
   -- must not run on Luvit's main thread; a coroutine is the documented context.

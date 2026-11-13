@@ -43,6 +43,38 @@ or split those records to evade a policy. Until the PreppyDB maintainers
 explicitly confirm that Molly's virtual-currency workload is permitted under
 the intended policy (or change the policy), production use remains blocked.
 
+### One-shot operator tool V1
+
+`ops/molly-db-migrate.lua` is the operator-facing command surface. Its live
+`preflight`, `backup`, `migrate`, `verify`, and `cutover` commands fail closed
+before opening a socket or reading connection credentials. The current policy
+blockers include the virtual-currency restriction, unqualified consistent
+SeaWorld snapshots and complete manifests, an unqualified source write-stop,
+live-source backup/restore qualification, unsupported lossless rollback after
+new PreppyDB writes, and the unreleased PreppyDB durability revision. No
+command-line confirmation flag overrides these blockers.
+
+The synthetic-only path exercises the existing migration primitive without
+network or filesystem access:
+
+```sh
+luvit ops/molly-db-migrate.lua migrate --dry-run --synthetic
+luvit ops/molly-db-migrate.lua migrate --synthetic
+luvit ops/molly-db-migrate.lua verify --synthetic
+```
+
+It uses fixed synthetic guild/global records and in-memory source and target
+adapters. It checks dry-run non-mutation, insert-only application, full record
+verification, and idempotent repeat. It is a test path, not a SeaWorld backup,
+PreppyDB server restore, live export, or cutover. The CI integration suite
+continues to exercise real PreppyDB backup/verify/restore using disposable
+synthetic server data.
+
+The earlier `ops/preppydb-migrate.lua` entry point is also policy-gated before
+it reads credentials or opens either database. Its live modes currently refuse
+for the same blockers; the in-memory and disposable-server tests call the
+migration primitive directly and remain available for synthetic qualification.
+
 ## Durability and transaction contract
 
 The adapter sends a single conditional document write per changed store
