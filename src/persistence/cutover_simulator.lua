@@ -47,9 +47,11 @@ end
 function Simulator:rollback(reconciled)
   if self.phase == "preppydb_active" and self.writes.preppydb > 0 then
     if not self.maintenance then
-      self.maintenance, self.phase = true, "maintenance"
+      self.maintenance, self.phase = true, "preppydb_maintenance"
       return false, "rollback_requires_write_stop"
     end
+  end
+  if self.phase == "preppydb_maintenance" then
     if type(reconciled) ~= "table" or reconciled.verified ~= true
       or reconciled.source_manifest_digest == nil
       or reconciled.source_manifest_digest ~= reconciled.target_manifest_digest

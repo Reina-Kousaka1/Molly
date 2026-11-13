@@ -69,7 +69,8 @@ server crash qualification remains necessary.
 `cutover_simulator.lua` models maintenance, import, verification, connector
 selection and write release without changing Molly configuration or opening a
 database. Before target writes, an unreleased cutover can be abandoned. Once
-PreppyDB writes have occurred, rollback first forces maintenance and refuses
+PreppyDB writes have occurred, rollback first forces a distinct post-cutover
+maintenance state and refuses
 to re-enable stale SeaWorld state. Returning to SeaWorld requires an explicit
 successful reverse reconciliation signal. No reverse exporter is implemented
 or qualified here, so this is a guard-state simulation, not proof that a

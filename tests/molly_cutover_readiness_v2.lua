@@ -328,7 +328,7 @@ assert(simulator:stop_writes() and simulator:import_complete() and simulator:ver
 assert(simulator:release_writes() and simulator:record_write("preppydb"))
 local rolled_back, rollback_error = simulator:rollback()
 assert(not rolled_back and rollback_error == "rollback_requires_write_stop")
-assert(simulator.phase == "maintenance")
+assert(simulator.phase == "preppydb_maintenance")
 local unreconciled, reconciliation_error = simulator:rollback(false)
 assert(not unreconciled and reconciliation_error == "reverse_reconciliation_required")
 local weak_evidence, weak_error = simulator:rollback(true)
