@@ -40,7 +40,8 @@ function provider:list_collections(token)
   return names
 end
 function provider:list_documents(token, collection, cursor, limit)
-  assert(token == self.active and cursor == nil and limit == 2)
+  assert(token == self.active and cursor == nil and type(limit) == "number"
+    and limit >= 1 and limit <= Snapshot.limits.page_size)
   local key = collection:match("^molly_g_(%d+)$") or collection:match("^molly_global_(.+)$")
   return { { key = key, value = docs[collection] } }, nil
 end
