@@ -68,7 +68,7 @@ local bridge = Bridge.new({
     return true
   end,
   logger = { warn = function(_, event, fields)
-    warnings[#warnings + 1] = { event = event, detail = fields and fields.detail }
+    warnings[#warnings + 1] = { event = event, detail = fields and fields.detail, location = fields and fields.location }
   end },
   cooldown_seconds = 30,
   max_parallel = 1,
