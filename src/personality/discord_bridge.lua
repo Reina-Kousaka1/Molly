@@ -86,7 +86,7 @@ end
 
 local function safe_error_location(error_value)
   if type(error_value) ~= "string" or #error_value > 4096 then return nil end
-  local source, line = error_value:match("([%w%._/%-]+%.lua):(%d+)")
+  local source, line = error_value:match("([%w%._:/%-]+%.lua):(%d+)")
   local filename = source and source:match("([^/]+)$")
   local number = tonumber(line)
   if not filename or not filename:match("^[%w_.%-]+$") or not number or number < 1 or number > 100000 then
