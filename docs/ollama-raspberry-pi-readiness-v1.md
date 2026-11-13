@@ -50,6 +50,29 @@ production mounts, but Docker could not enforce the requested memory cap. The
 unit tests completed successfully. Do not treat that as a measured production
 load test.
 
+## Production activation preflight — 2026-11-13
+
+- Exactly one `molly-bot` container is running; the legacy `molly.service` is
+  loaded but inactive. Container image: `molly:v1.2-boutique-showcase-fix-2026-11-07`,
+  image ID `sha256:e78871099644f8a8dbb50420f491c53602bff20104790fe4fc6a137fa557ae43`.
+  The production container remained running and was not restarted or replaced.
+- `/etc/molly/molly.env` exists with mode `0600`. Its values were not emitted.
+  `MOLLY_PERSONALITY_ENGINE_ENABLED` is unset/disabled and
+  `MOLLY_OLLAMA_URL` is not configured. No text/vision model overrides are
+  configured.
+- The local Ollama service is disabled/inactive and port 11434 has no local
+  listener. Tailscale has no Windows peer. No existing private Windows address
+  was available, so no network request, model inference or attachment request
+  was made.
+- The current deployed image does not contain the integration's Discord bridge
+  or model router. The feature is not activated in production.
+
+**Current activation state: BLOCKED.** The missing Windows private-LAN endpoint
+prevents real Ollama API/model tests. A separate Discord test bot/server is
+also still required for Discord E2E. No firewall, LAN, service, production
+configuration, database or bot-process changes were made during this
+preflight.
+
 ## Routing and failure behavior
 
 - Ordinary direct mentions use `qwen2.5:3b`.
@@ -122,8 +145,9 @@ Ollama E2E binds only to `127.0.0.1` and uses synthetic requests.
    Pi Lua/Python and networkless Luvit checks passed, and exact-commit mock E2E
    and CI passed. A standalone host Luvit binary and full E2E on Pi remain
    unavailable in the present setup.
-3. **What blocks a production update?** PR #8 remains Draft/unmerged; no live
-   Discord test bot or Windows private-LAN Ollama endpoint was used; real
+3. **What blocks a production update?** PR #8 remains Draft/unmerged; the
+   current production environment has no configured Windows private-LAN
+   Ollama endpoint; no live Discord test bot was used; real
    attachment delivery and target-laptop vision-model VRAM/latency are
    unverified; and the production image has no auditable Git revision label.
    Before any future release, resolve those checks, preserve the false feature
