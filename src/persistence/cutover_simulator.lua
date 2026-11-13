@@ -2,8 +2,8 @@
 local Simulator = {}
 
 function Simulator.new()
-  return { phase = "seaworld_active", writes = { seaworld = 0, preppydb = 0 },
-    verified = false, maintenance = false }
+  return setmetatable({ phase = "seaworld_active", writes = { seaworld = 0, preppydb = 0 },
+    verified = false, maintenance = false }, { __index = Simulator })
 end
 
 function Simulator:stop_writes()
