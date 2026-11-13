@@ -68,6 +68,14 @@ local function clean_detail(error_value)
     and #error_value.code <= 60 and error_value.code:match("^[%w_%-]+$") then
     return error_value.code
   end
+  if type(error_value) == "string" then
+    local lower = error_value:lower()
+    if lower:find("yield", 1, true) then return "async_yield_error" end
+    if lower:find("timeout", 1, true) then return "timeout" end
+    if lower:find("module", 1, true) and lower:find("not found", 1, true) then
+      return "dependency_unavailable"
+    end
+  end
   return "provider_unavailable"
 end
 
@@ -159,11 +167,11 @@ function Bridge:on_message(message)
         or "I couldn't open that picture safely, bestie. Try one clear JPG, PNG, or WebP image 🎀"
       send_text(self, message.channel_id, text)
       if self.logger then
-        local detail = not called and "handler_error" or clean_detail(generation_error)
+        local detail = clean_detail(not called and reply or generation_error)
         pcall(self.logger.warn, self.logger, "personality_discord_vision_failed", { detail = detail })
       end
     elseif self.logger then
-      local detail = not called and "handler_error" or clean_detail(generation_error)
+      local detail = clean_detail(not called and reply or generation_error)
       pcall(self.logger.warn, self.logger, "personality_discord_generation_failed", { detail = detail })
     end
     release()

@@ -125,6 +125,18 @@ test("generation diagnostics keep safe provider error codes without request cont
   assert(not warnings[1].fields.detail:find("private", 1, true))
   assert(bridge.parallel == 0)
 end)
+test("thrown async runtime errors are classified without leaking raw details", function()
+  local queue, warnings = {}, {}
+  local bridge = Bridge.new({ enabled = true, bot_id = "99",
+    engine = { generate = function() error("attempt to yield across C boundary /private/path") end },
+    spawn = function(fn) queue[#queue + 1] = fn end,
+    logger = { warn = function(_, event, fields) warnings[#warnings + 1] = { event = event, fields = fields } end } })
+  assert(bridge:on_message(message("<@99> safe test")))
+  queue[1]()
+  assert(#warnings == 1 and warnings[1].fields.detail == "async_yield_error")
+  assert(not tostring(warnings[1].fields.detail):find("private", 1, true))
+  assert(bridge.parallel == 0)
+end)
 test("a failed Ollama call does not poison subsequent requests from other users", function()
   local now, calls, queue = 100, 0, {}
   local engine = { generate = function()

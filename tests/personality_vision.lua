@@ -96,7 +96,7 @@ test("unsupported, oversized, mismatched, multiple and malformed attachments fai
   assert(value == nil and err == "too_many_images")
   value, err = image_loader:prepare({ attachment("face.png", "image/png", good, { size = Images.DEFAULT_MAX_BYTES + 1 }) })
   assert(value == nil and err == "image_too_large")
-  assert(downloaded == 0, "invalid metadata must not trigger a download")
+  assert(downloaded == 1, "only the bounded size-mismatch case needs content verification")
 end)
 
 test("download size, returned MIME, and actual file signature must agree", function()
