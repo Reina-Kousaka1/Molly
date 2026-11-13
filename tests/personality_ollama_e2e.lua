@@ -59,6 +59,7 @@ local bridge = Bridge.new({
   bot_id = "999999",
   engine = engine,
   image_loader = { prepare = function(attachments)
+    if attachments == nil then return {} end
     assert(type(attachments) == "table" and #attachments == 1)
     return { "AQIDBA==" }
   end },
