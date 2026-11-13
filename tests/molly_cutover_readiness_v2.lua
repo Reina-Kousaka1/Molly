@@ -248,7 +248,7 @@ assert(not live_refusal and live_refusal_error.code == "live_import_disabled" an
 local workflow_target = target_new("synthetic-workflow-target")
 local workflow_ok, workflow_result = Workflow.run({ source = provider, target = workflow_target, json = Json,
   target_identity = "synthetic-workflow-target", mode = "apply", page_size = 2, batch_size = 1, synthetic = true })
-assert(workflow_ok and workflow_result.records == 3 and workflow_result.manifest.import.writes == 3)
+assert(workflow_ok and workflow_result.records == 3 and workflow_result.import.writes == 3)
 assert(Gate.shared:is_accepting() and provider.active == nil)
 
 target.unknown_after_commit = true
