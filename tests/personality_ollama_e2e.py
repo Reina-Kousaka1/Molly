@@ -207,14 +207,25 @@ def main() -> int:
     expected_images = [0, 0, 1, 0, 0, 0, 0]
     expected_think = [None, False, False, None, None, None, None]
     for index, (request, expected) in enumerate(zip(requests, EXPECTED_PROMPTS), start=1):
-        if request["model"] != expected_models[index - 1] or request["stream"] is not False or request["prompt"] != expected:
-            print(f"mock request {index} did not match its expected model/protocol scenario", file=sys.stderr)
-            return 1
-        if request["roles"] != ["system", "user"]:
-            print(f"mock request {index} did not contain the expected bounded prompt roles", file=sys.stderr)
-            return 1
-        if request["image_count"] != expected_images[index - 1] or request["think"] != expected_think[index - 1]:
-            print(f"mock request {index} did not match expected image/thinking controls", file=sys.stderr)
+        mismatches = []
+        expected_role_list = ["system", "user"]
+        if request["model"] != expected_models[index - 1]:
+            mismatches.append("model")
+        if request["stream"] is not False:
+            mismatches.append("stream")
+        if request["prompt"] != expected:
+            mismatches.append("prompt")
+        if request["roles"] != expected_role_list:
+            mismatches.append("roles")
+        if request["image_count"] != expected_images[index - 1]:
+            mismatches.append("image_count")
+        if request["think"] != expected_think[index - 1]:
+            mismatches.append("think")
+        if mismatches:
+            print(
+                f"mock request {index} mismatched fields: {','.join(mismatches)}",
+                file=sys.stderr,
+            )
             return 1
 
     print(f"mock Ollama server: {len(requests)} loopback chat requests plus verified vision capability query; text, deep and image routes, failures and recovery passed")
