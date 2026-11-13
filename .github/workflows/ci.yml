@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, codex/molly-preppydb-readiness-v1, codex/molly-economy-migrator-v1]
+    branches: [main, codex/molly-preppydb-readiness-v1, codex/molly-economy-migrator-v1, codex/molly-cutover-readiness-v2]
 
 permissions:
   contents: read

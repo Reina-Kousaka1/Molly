@@ -19,6 +19,16 @@ local connector = assert(Connector.new({
   max_response_bytes = 4 * 1024 * 1024,
 }))
 
+local function request_async(client, method, path)
+  local thread = coroutine.running()
+  local finished, result, failure = false, nil, nil
+  client:call_async(method, path, nil, function(data, err)
+    result, failure, finished = data, err, true
+    if thread then coroutine.resume(thread) end
+  end)
+  if not finished then coroutine.yield() end
+  return result, failure
+end
 local completed
 coroutine.wrap(function()
   local ok, failure = pcall(function()
@@ -55,6 +65,18 @@ coroutine.wrap(function()
     local pair_b = connector:get("molly_guild_state", test_key("txn-b"))
     assert(pair_a and pair_b and pair_b.value.marker == "b")
     assert(pair_a.value.marker == "racer-1" or pair_a.value.marker == "racer-2")
+    local inventory, inventory_error = request_async(connector.client, "GET", "/v1/inventory")
+    assert(inventory and not inventory_error and inventory.complete == true)
+    assert(type(inventory.sequence) == "string" and type(inventory.generation) == "string")
+    local digest_path = assert(os.getenv("MOLLY_PREPPYDB_INVENTORY_SHA256_FILE"))
+    local digest_file = assert(io.open(digest_path, "r"))
+    local expected_digest = digest_file:read("*l")
+    assert(digest_file:close())
+    assert(inventory.sha256 == expected_digest, "persisted inventory changed across process restart")
+    local page_path = "/v1/inventory/molly_guild_state/documents?sequence="
+      .. inventory.sequence .. "&generation=" .. inventory.generation .. "&limit=1"
+    local page, page_error = request_async(connector.client, "GET", page_path)
+    assert(page and not page_error and page.sequence == inventory.sequence and #page.records == 1)
   end)
   completed = { ok = ok, failure = failure }
 end)()

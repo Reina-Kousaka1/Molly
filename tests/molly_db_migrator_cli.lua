@@ -12,10 +12,24 @@ local function capture(args)
 end
 
 local blockers = Policy.live_blockers()
+local allowed, live_blockers = Policy.live_migration_allowed()
+assert(allowed == false and #live_blockers == #blockers)
+local required_blockers = {
+  "preppydb_virtual_currency_policy_scope_not_approved",
+  "seaworld_snapshot_export_not_integrated_with_molly_transport",
+  "preppydb_inventory_api_not_released_or_integrated",
+  "rollback_after_preppydb_writes_unsupported",
+  "raspberry_pi_arm64_hardware_not_qualified",
+}
+local seen = {}
+for _, blocker in ipairs(live_blockers) do seen[blocker] = true end
+for _, blocker in ipairs(required_blockers) do
+  assert(seen[blocker], "missing live blocker: " .. blocker)
+end
 assert(#blockers > 0)
 local code, output = capture({ "preflight" })
 assert(code ~= 0 and output:find("BLOCKED", 1, true))
-assert(output:find("virtual_currency_policy", 1, true))
+assert(output:find("preppydb_virtual_currency_policy_scope_not_approved", 1, true))
 
 for _, command in ipairs({
   { "backup" },
