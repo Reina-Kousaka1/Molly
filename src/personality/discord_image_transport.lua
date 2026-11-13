@@ -14,7 +14,7 @@ local function parse_url(url)
     return nil
   end
   local host, path = url:match("^https://([^/?#]+)(/[^#]*)$")
-  if host ~= ALLOWED_HOST or not path or path:sub(1, 12) ~= "/attachments/" then
+  if host ~= ALLOWED_HOST or not path or path:sub(1, 13) ~= "/attachments/" then
     return nil
   end
   if path:find("\\", 1, true) or path:find("/../", 1, true) or path:find("/./", 1, true) then

@@ -20,7 +20,7 @@ end
 local function valid_url(url)
   if type(url) ~= "string" or #url > 4096 or url:find("[%z\1-\32\127]") then return false end
   local authority, path = url:match("^https://([^/?#]+)(/[^#]*)$")
-  if authority ~= Images.ALLOWED_HOST or not path or path:sub(1, 12) ~= "/attachments/" then
+  if authority ~= Images.ALLOWED_HOST or not path or path:sub(1, 13) ~= "/attachments/" then
     return false
   end
   if path:find("\\", 1, true) or path:find("/../", 1, true) or path:find("/./", 1, true) then
