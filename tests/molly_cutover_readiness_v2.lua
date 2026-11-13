@@ -230,6 +230,7 @@ end
 
 local target = target_new()
 local changed_snapshot_target = target_new()
+altered_snapshot.snapshot_id = altered.snapshot_id
 local changed_source, changed_source_error = Resumable.run({ snapshot = altered_snapshot,
   manifest = manifest, target = changed_snapshot_target, json = Json,
   target_identity = "synthetic-preppydb", synthetic = true,
