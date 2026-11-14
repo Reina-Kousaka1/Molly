@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
 
       - name: Install declared Rust MSRV
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Install native Lua 5.1 and Luvit build prerequisites
         run: |
